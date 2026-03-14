@@ -6,6 +6,12 @@ A Sui Move extension for [World](https://github.com/evefrontier/world-contracts)
 
 Players deposit items from their owned inventory into a StorageUnit's extension-controlled open inventory and receive a `multicoin::Balance` receipt in return. The receipt is a standard MultiCoin balance object — it can be split, joined, transferred, or traded freely. Anyone holding the receipt can redeem it to withdraw the underlying items.
 
+### Why Warehouse Receipts?
+
+Before _warehouse receipts_, every behavior a Storage Unit needed - item trading, lending, escrow, guild hangars - had to be built into a single monolithic extension contract. Adding a new use case meant rewriting and redeploying the extension, and the SSU owner had to trust that one contract to handle everything.
+
+Warehouse receipts decouple item custody from downstream logic by minting a _claim_ on an item deposited in an underlying storage unit. The extension's only job is converting items deposited into open inventory - into freely tradeable receipts of deposit. Once a player holds a receipt, they can interact with independent, composable systems item exchanges, tribe mission contracts, lending platforms, or escrow services. All without the SSU extension needing to know about any of them.
+
 ### Use Cases
 
 - **Escrow services** — lock items and issue a receipt to the counterparty
