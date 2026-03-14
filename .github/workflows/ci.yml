@@ -37,24 +37,24 @@ jobs:
       - run: npm i @mysten/prettier-plugin-move
       - run: npx prettier-move -c packages/contracts/**/*.move
 
-  deploy-testnet:
-    if: github.ref == 'refs/heads/main'
-    needs: 
-      - build-test
-      - move-formatter
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Homebrew
-        run: |
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
-      - name: Install Sui using Homebrew
-        run: /home/linuxbrew/.linuxbrew/bin/brew install sui
-      - name: setup sui config for testnet
-        run: |
-          sui client active-env || sui client switch --env testnet
-      - name: Dry-run publish
-        run: sui client publish --skip-fetch-latest-gas-price --gas-budget 30000000 --dry-run .
+  # deploy-testnet:
+  #   if: github.ref == 'refs/heads/main'
+  #   needs: 
+  #     - build-test
+  #     - move-formatter
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: read
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Install Homebrew
+  #       run: |
+  #         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  #         echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+  #     - name: Install Sui using Homebrew
+  #       run: /home/linuxbrew/.linuxbrew/bin/brew install sui
+  #     - name: setup sui config for testnet
+  #       run: |
+  #         sui client active-env || sui client switch --env testnet
+  #     - name: Dry-run publish
+  #       run: sui client publish --skip-fetch-latest-gas-price --gas-budget 30000000 --dry-run .

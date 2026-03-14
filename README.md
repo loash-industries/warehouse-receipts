@@ -1,107 +1,110 @@
-# Sui Move Contract Local Dev Environment Scaffold
+# Warehouse Receipts
 
-A concise boilerplate for building and testing a `.move` contract system against local network. (Current code purposefully minimal: no custom events, no shared metadata object, and no public `entry` mint wrapper yet.)
+A Sui Move extension for [World](https://github.com/evefrontier/world-contracts) StorageUnits that turns deposited items into tradeable bearer tokens using [MultiCoin](https://github.com/Algorithmic-Warfare/multicoin).
 
+## Overview
 
-_Note: This has only been tested in MacOS & Linux so far_
----
+Players deposit items from their owned inventory into a StorageUnit's extension-controlled open inventory and receive a `multicoin::Balance` receipt in return. The receipt is a standard MultiCoin balance object — it can be split, joined, transferred, or traded freely. Anyone holding the receipt can redeem it to withdraw the underlying items.
 
-## Installing depedencies and requirements
+### Use Cases
 
-1. Install the [rust tools](https://rust-lang.org/tools/install/)
+- **Escrow services** — lock items and issue a receipt to the counterparty
+- **Collateralized lending** — use receipts as on-chain collateral
+- **Tradeable warehouse receipts** — list receipts on MultiCoin-based DEX pools
+- **Gift vouchers / claim tickets** — mint and distribute redeemable tokens
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────┐
+│                 receipt.move                      │
+│  (public interface — deposit, redeem, init)       │
+│                                                   │
+│  VaultAuth          deposit_for_receipt()         │
+│  (extension          redeem_receipt()             │
+│   witness)           initialize_vault()           │
+└──────────────┬───────────────────────────────────┘
+               │ public(package)
+┌──────────────▼───────────────────────────────────┐
+│                  vault.move                       │
+│  (internal — mint/burn custody)                   │
+│                                                   │
+│  VaultConfig        create_vault()                │
+│  (custodies          mint()                       │
+│   CollectionCap)     burn()                       │
+└──────────────────────────────────────────────────┘
+               │
+┌──────────────▼───────────────────────────────────┐
+│              multicoin::multicoin                 │
+│  Collection, CollectionCap, Balance               │
+│  (split, join, transfer, mint, burn)              │
+└──────────────────────────────────────────────────┘
+```
+
+### Modules
+
+| Module | Visibility | Purpose |
+|--------|-----------|---------|
+| `receipt` | `public` | User-facing functions: vault initialization, deposit, and redeem |
+| `vault` | `public(package)` | Internal custody layer: wraps MultiCoin mint/burn behind a `VaultConfig` |
+
+### Key Types
+
+| Type | Module | Description |
+|------|--------|-------------|
+| `VaultAuth` | `receipt` | Witness for StorageUnit extension authorization |
+| `VaultConfig` | `vault` | Shared object binding a StorageUnit to its MultiCoin `CollectionCap` |
+| `Collection` | `multicoin` | Shared object tracking supply per asset type (1:1 with StorageUnit) |
+| `Balance` | `multicoin` | Owned receipt token — splittable, joinable, transferable |
+
+## Flow
+
+### Setup (SSU owner, one-time)
+
+1. Call `authorize_extension<VaultAuth>` on the StorageUnit
+2. Call `initialize_vault` — creates and shares the `Collection` + `VaultConfig`
+
+### Deposit (any player with items in owned inventory)
+
+1. Call `deposit_for_receipt` with the item `type_id` and `quantity`
+2. Items move: **owned inventory → open inventory** (extension-controlled)
+3. A `multicoin::Balance` receipt is minted and returned to the caller
+
+### Redeem (anyone holding a receipt)
+
+1. Call `redeem_receipt` with the `Balance` receipt
+2. The receipt is burned and items move: **open inventory → redeemer's owned inventory**
+3. The redeemer does not need to be the original depositor
+
+### Receipt Operations (standard MultiCoin)
+
+Receipts are standard `multicoin::Balance` objects:
+
+```
+balance.split(amount, ctx)   // Split into two balances
+balance.join(other, ctx)     // Merge two balances of same type
+transfer::public_transfer(balance, recipient)  // Transfer to another address
+```
+
+## Events
+
+| Event | Emitted When |
+|-------|-------------|
+| `VaultInitializedEvent` | Vault created for a StorageUnit |
+| `ReceiptMintedEvent` | Items deposited, receipt issued |
+| `ReceiptRedeemedEvent` | Receipt burned, items withdrawn |
+
+## Error Codes
+
+| Constant | Module | Meaning |
+|----------|--------|---------|
+| `EStorageUnitMismatch` | `receipt` | VaultConfig or receipt doesn't match the target StorageUnit |
+| `EWrongStorageUnit` | `vault` | Balance's collection doesn't match the VaultConfig's CollectionCap |
+
+## Build & Test
+
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-2. Install [node version manager](https://github.com/nvm-sh/nvm)
-```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-```
-### Node dependencies
-
-Before applying the following, run `nvm install 24 && nvm use 24`
-
-3. Install [yarn package manager](https://yarnpkg.com/getting-started/install)
-```bash
-npm install -g yarn
-```
-4. Install [mprocs](https://github.com/pvolok/mprocs)
-```bash
-npm install -g mprocs
-```
-
-### Rust dependencies
-
-5. Install the [sui tools manager](https://github.com/MystenLabs/suiup)
-```bash
-cargo install --git https://github.com/Mystenlabs/suiup.git --locked
-```
-6. Install the latest [sui tools](https://docs.sui.io/guides/developer/getting-started/sui-install)
-```bash
-suiup install sui@testnet
-```
-7. Install [watchexec tool](https://github.com/watchexec/watchexec)
-```bash
-cargo install --locked watchexec-cli
-```
-
-
-## How to set up local network dev env
-1. Install Packages
-```bash
-yarn
-cd packages/contracts && yarn
-```
-
-2. Start Local network + fund address from local faucet + build contracts + deploy contracts.
-```bash
-yarn start:local
-```
-
----
-### TL;DR of Local Build & Publish Workflow
-```bash
-# 1. Install deps
-yarn
-
-# 2. Start a local network
-yarn start:local
-
-# 3. Fund / import account
-yarn fund          # imports key (see .env) + faucet funding loop
-
-# 4. Build the Move package
-yarn --cwd packages/contracts build:watch
-
-# 5. Publish to localnet (from repo root OR pass '.' if inside package)
-yarn --cwd packages/contracts deploy:watch
-
-# 6. Run `.move` tests
-yarn --cwd packages/contracts test
-```
-After publish, `.env.local` (written where you run the script) contains at least:
-* `PACKAGE_ID`
-
----
-## Prerequisites
-* Rust (https://rust-lang.org/tools/install/)
-* Sui CLI (https://docs.sui.io) in `PATH`
-* `bash`, `jq`
-* nodejs (tested with `v20.19`) && `yarn` (Corepack / Node.js)
-* Optional: `docker`, `mprocs`, `watchexec`
-
-Install Node dependencies:
-```bash
-yarn
-cd packages/contracts && yarn
-```
-
----
-## Directory Layout (Relevant)
-```
-build_scripts/                         # Root helper scripts (start, fund, mint placeholder, etc.)
-packages/contracts/                    # Move package root
-packages/contracts/sources/            # Location for `.move` files
-packages/contracts/tests/token_tests.move
-packages/contracts/build_scripts/      # Build & publish tooling
-mprocs.yaml                            # Dev process orchestration
+cd packages/contracts
+sui move build
+sui move test
 ```

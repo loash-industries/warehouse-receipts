@@ -1,12 +1,8 @@
 [package]
-name = "TokenBoilerplate"
+name = "warehouse_receipts"
 version = "0.0.1"
 edition = "2024"
 
 [dependencies]
-World = { git = "https://github.com/evefrontier/world-contracts.git", subdir = "contracts/world", rev = "main" }
-
-[addresses]
-# Will be rewritten on publish
-admin = "0x0"
-TokenBoilerplate = "0x0"
+world = { git = "https://github.com/evefrontier/world-contracts.git", subdir = "contracts/world", rev = "v0.0.18" }
+multicoin = { git = "https://github.com/Algorithmic-Warfare/multicoin.git", subdir = "packages/multicoin", rev = "main" }

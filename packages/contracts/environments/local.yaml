@@ -1,9 +1,0 @@
-network: localnet
-faucet_url: http://127.0.0.1:9123/gas
-pre_funded_accounts:
-  - alias: admin
-    address: null # will be filled after keygen
-  - alias: user1
-    address: null
-  - alias: user2
-    address: null

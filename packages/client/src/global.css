@@ -1,9 +1,0 @@
-@import "tailwindcss";
-
-body {
-  font-family: system-ui, Inter, sans-serif;
-  background: black;
-  color: white;
-  -webkit-font-smoothing: antialiased;
-}
-h1,h2,h3,h4 { font-weight:600; letter-spacing:-0.02em; }
