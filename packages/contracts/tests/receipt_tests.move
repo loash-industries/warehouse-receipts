@@ -2527,4 +2527,444 @@ module warehouse_receipts::receipt_tests {
 
         ts::end(ts);
     }
+
+    // === Batch Tests ===
+
+    /// Test batch deposit of multiple item types and verify all receipts are returned.
+    #[test]
+    fun batch_deposit_multiple_types() {
+        let mut ts = ts::begin(governor());
+        let (_owner_id, depositor_id, storage_id, _nwn_id) = setup_vault_scenario(&mut ts);
+
+        // Mint both item types
+        mint_items_to_depositor(
+            &mut ts,
+            depositor_id,
+            storage_id,
+            LENS_ITEM_ID,
+            LENS_TYPE_ID,
+            LENS_VOLUME,
+            LENS_QUANTITY,
+        );
+        mint_items_to_depositor(
+            &mut ts,
+            depositor_id,
+            storage_id,
+            AMMO_ITEM_ID,
+            AMMO_TYPE_ID,
+            AMMO_VOLUME,
+            AMMO_QUANTITY,
+        );
+
+        let depositor_owner_cap_id = {
+            ts::next_tx(&mut ts, admin());
+            let c = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let id = c.owner_cap_id();
+            ts::return_shared(c);
+            id
+        };
+
+        // Batch deposit both types
+        ts::next_tx(&mut ts, depositor());
+        {
+            let mut storage_unit = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            let mut depositor_char = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let (owner_cap, cap_receipt) = depositor_char.borrow_owner_cap<Character>(
+                ts::most_recent_receiving_ticket<OwnerCap<Character>>(&depositor_id),
+                ts.ctx(),
+            );
+            let vault_config = ts::take_shared<VaultConfig>(&ts);
+            let mut collection = ts::take_shared<Collection>(&ts);
+
+            let receipts = receipt::batch_deposit_for_receipt(
+                &mut storage_unit,
+                &depositor_char,
+                &owner_cap,
+                &vault_config,
+                &mut collection,
+                vector[LENS_TYPE_ID, AMMO_TYPE_ID],
+                vector[LENS_QUANTITY, AMMO_QUANTITY],
+                ts.ctx(),
+            );
+
+            // Verify we got 2 receipts
+            assert_eq!(receipts.length(), 2);
+
+            // Transfer all receipts to depositor
+            let mut receipts = receipts;
+            while (!receipts.is_empty()) {
+                transfer::public_transfer(receipts.pop_back(), depositor());
+            };
+            receipts.destroy_empty();
+
+            depositor_char.return_owner_cap(owner_cap, cap_receipt);
+            ts::return_shared(depositor_char);
+            ts::return_shared(storage_unit);
+            ts::return_shared(vault_config);
+            ts::return_shared(collection);
+        };
+
+        // Verify items moved to open inventory
+        ts::next_tx(&mut ts, admin());
+        {
+            let su = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            let collection = ts::take_shared<Collection>(&ts);
+            assert_eq!(su.item_quantity(su.open_storage_key(), LENS_TYPE_ID), LENS_QUANTITY);
+            assert_eq!(su.item_quantity(su.open_storage_key(), AMMO_TYPE_ID), AMMO_QUANTITY);
+            assert!(!su.contains_item(depositor_owner_cap_id, LENS_TYPE_ID));
+            assert!(!su.contains_item(depositor_owner_cap_id, AMMO_TYPE_ID));
+            assert_eq!(vault::total_supply(&collection, LENS_TYPE_ID), LENS_QUANTITY as u64);
+            assert_eq!(vault::total_supply(&collection, AMMO_TYPE_ID), AMMO_QUANTITY as u64);
+            ts::return_shared(su);
+            ts::return_shared(collection);
+        };
+
+        ts::end(ts);
+    }
+
+    /// Test batch redeem of multiple receipts in a single call.
+    #[test]
+    fun batch_redeem_multiple_receipts() {
+        let mut ts = ts::begin(governor());
+        let (_owner_id, depositor_id, storage_id, _nwn_id) = setup_vault_scenario(&mut ts);
+
+        // Mint both item types
+        mint_items_to_depositor(
+            &mut ts,
+            depositor_id,
+            storage_id,
+            LENS_ITEM_ID,
+            LENS_TYPE_ID,
+            LENS_VOLUME,
+            LENS_QUANTITY,
+        );
+        mint_items_to_depositor(
+            &mut ts,
+            depositor_id,
+            storage_id,
+            AMMO_ITEM_ID,
+            AMMO_TYPE_ID,
+            AMMO_VOLUME,
+            AMMO_QUANTITY,
+        );
+
+        // Batch deposit both types
+        ts::next_tx(&mut ts, depositor());
+        {
+            let mut storage_unit = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            let mut depositor_char = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let (owner_cap, cap_receipt) = depositor_char.borrow_owner_cap<Character>(
+                ts::most_recent_receiving_ticket<OwnerCap<Character>>(&depositor_id),
+                ts.ctx(),
+            );
+            let vault_config = ts::take_shared<VaultConfig>(&ts);
+            let mut collection = ts::take_shared<Collection>(&ts);
+
+            let receipts = receipt::batch_deposit_for_receipt(
+                &mut storage_unit,
+                &depositor_char,
+                &owner_cap,
+                &vault_config,
+                &mut collection,
+                vector[LENS_TYPE_ID, AMMO_TYPE_ID],
+                vector[LENS_QUANTITY, AMMO_QUANTITY],
+                ts.ctx(),
+            );
+
+            let mut receipts = receipts;
+            while (!receipts.is_empty()) {
+                transfer::public_transfer(receipts.pop_back(), depositor());
+            };
+            receipts.destroy_empty();
+
+            depositor_char.return_owner_cap(owner_cap, cap_receipt);
+            ts::return_shared(depositor_char);
+            ts::return_shared(storage_unit);
+            ts::return_shared(vault_config);
+            ts::return_shared(collection);
+        };
+
+        let depositor_owner_cap_id = {
+            ts::next_tx(&mut ts, admin());
+            let c = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let id = c.owner_cap_id();
+            ts::return_shared(c);
+            id
+        };
+
+        // Batch redeem both receipts
+        ts::next_tx(&mut ts, depositor());
+        {
+            let receipt_1 = ts::take_from_sender<Balance>(&ts);
+            let receipt_2 = ts::take_from_sender<Balance>(&ts);
+
+            let mut storage_unit = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            let depositor_char = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let vault_config = ts::take_shared<VaultConfig>(&ts);
+            let mut collection = ts::take_shared<Collection>(&ts);
+
+            receipt::batch_redeem_receipt(
+                vector[receipt_1, receipt_2],
+                &mut storage_unit,
+                &depositor_char,
+                &vault_config,
+                &mut collection,
+                ts.ctx(),
+            );
+
+            ts::return_shared(depositor_char);
+            ts::return_shared(storage_unit);
+            ts::return_shared(vault_config);
+            ts::return_shared(collection);
+        };
+
+        // Verify all items returned to owned inventory
+        ts::next_tx(&mut ts, admin());
+        {
+            let su = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            let collection = ts::take_shared<Collection>(&ts);
+            assert_eq!(su.item_quantity(depositor_owner_cap_id, LENS_TYPE_ID), LENS_QUANTITY);
+            assert_eq!(su.item_quantity(depositor_owner_cap_id, AMMO_TYPE_ID), AMMO_QUANTITY);
+            assert!(!su.contains_item(su.open_storage_key(), LENS_TYPE_ID));
+            assert!(!su.contains_item(su.open_storage_key(), AMMO_TYPE_ID));
+            assert_eq!(vault::total_supply(&collection, LENS_TYPE_ID), 0);
+            assert_eq!(vault::total_supply(&collection, AMMO_TYPE_ID), 0);
+            ts::return_shared(su);
+            ts::return_shared(collection);
+        };
+
+        ts::end(ts);
+    }
+
+    /// Test full batch round-trip: batch deposit then batch redeem restores original state.
+    #[test]
+    fun batch_deposit_then_batch_redeem_round_trip() {
+        let mut ts = ts::begin(governor());
+        let (_owner_id, depositor_id, storage_id, _nwn_id) = setup_vault_scenario(&mut ts);
+
+        mint_items_to_depositor(
+            &mut ts,
+            depositor_id,
+            storage_id,
+            LENS_ITEM_ID,
+            LENS_TYPE_ID,
+            LENS_VOLUME,
+            LENS_QUANTITY,
+        );
+        mint_items_to_depositor(
+            &mut ts,
+            depositor_id,
+            storage_id,
+            AMMO_ITEM_ID,
+            AMMO_TYPE_ID,
+            AMMO_VOLUME,
+            AMMO_QUANTITY,
+        );
+
+        let depositor_owner_cap_id = {
+            ts::next_tx(&mut ts, admin());
+            let c = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let id = c.owner_cap_id();
+            ts::return_shared(c);
+            id
+        };
+
+        // Batch deposit
+        ts::next_tx(&mut ts, depositor());
+        {
+            let mut storage_unit = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            let mut depositor_char = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let (owner_cap, cap_receipt) = depositor_char.borrow_owner_cap<Character>(
+                ts::most_recent_receiving_ticket<OwnerCap<Character>>(&depositor_id),
+                ts.ctx(),
+            );
+            let vault_config = ts::take_shared<VaultConfig>(&ts);
+            let mut collection = ts::take_shared<Collection>(&ts);
+
+            let receipts = receipt::batch_deposit_for_receipt(
+                &mut storage_unit,
+                &depositor_char,
+                &owner_cap,
+                &vault_config,
+                &mut collection,
+                vector[LENS_TYPE_ID, AMMO_TYPE_ID],
+                vector[LENS_QUANTITY, AMMO_QUANTITY],
+                ts.ctx(),
+            );
+
+            let mut receipts = receipts;
+            while (!receipts.is_empty()) {
+                transfer::public_transfer(receipts.pop_back(), depositor());
+            };
+            receipts.destroy_empty();
+
+            depositor_char.return_owner_cap(owner_cap, cap_receipt);
+            ts::return_shared(depositor_char);
+            ts::return_shared(storage_unit);
+            ts::return_shared(vault_config);
+            ts::return_shared(collection);
+        };
+
+        // Batch redeem
+        ts::next_tx(&mut ts, depositor());
+        {
+            let receipt_1 = ts::take_from_sender<Balance>(&ts);
+            let receipt_2 = ts::take_from_sender<Balance>(&ts);
+
+            let mut storage_unit = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            let depositor_char = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let vault_config = ts::take_shared<VaultConfig>(&ts);
+            let mut collection = ts::take_shared<Collection>(&ts);
+
+            receipt::batch_redeem_receipt(
+                vector[receipt_1, receipt_2],
+                &mut storage_unit,
+                &depositor_char,
+                &vault_config,
+                &mut collection,
+                ts.ctx(),
+            );
+
+            ts::return_shared(depositor_char);
+            ts::return_shared(storage_unit);
+            ts::return_shared(vault_config);
+            ts::return_shared(collection);
+        };
+
+        // Verify state fully restored
+        ts::next_tx(&mut ts, admin());
+        {
+            let su = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            let collection = ts::take_shared<Collection>(&ts);
+            assert_eq!(su.item_quantity(depositor_owner_cap_id, LENS_TYPE_ID), LENS_QUANTITY);
+            assert_eq!(su.item_quantity(depositor_owner_cap_id, AMMO_TYPE_ID), AMMO_QUANTITY);
+            assert!(!su.contains_item(su.open_storage_key(), LENS_TYPE_ID));
+            assert!(!su.contains_item(su.open_storage_key(), AMMO_TYPE_ID));
+            assert_eq!(vault::total_supply(&collection, LENS_TYPE_ID), 0);
+            assert_eq!(vault::total_supply(&collection, AMMO_TYPE_ID), 0);
+            ts::return_shared(su);
+            ts::return_shared(collection);
+        };
+
+        ts::end(ts);
+    }
+
+    /// Test batch deposit with mismatched vector lengths aborts.
+    #[test]
+    #[
+        expected_failure(
+            abort_code = receipt::EBatchLengthMismatch,
+            location = warehouse_receipts::receipt,
+        ),
+    ]
+    fun batch_deposit_mismatched_lengths_aborts() {
+        let mut ts = ts::begin(governor());
+        let (_owner_id, depositor_id, storage_id, _nwn_id) = setup_vault_scenario(&mut ts);
+
+        mint_items_to_depositor(
+            &mut ts,
+            depositor_id,
+            storage_id,
+            LENS_ITEM_ID,
+            LENS_TYPE_ID,
+            LENS_VOLUME,
+            LENS_QUANTITY,
+        );
+
+        ts::next_tx(&mut ts, depositor());
+        let mut storage_unit = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+        let mut depositor_char = ts::take_shared_by_id<Character>(&ts, depositor_id);
+        let (owner_cap, _cap_receipt) = depositor_char.borrow_owner_cap<Character>(
+            ts::most_recent_receiving_ticket<OwnerCap<Character>>(&depositor_id),
+            ts.ctx(),
+        );
+        let vault_config = ts::take_shared<VaultConfig>(&ts);
+        let mut collection = ts::take_shared<Collection>(&ts);
+
+        // 2 type_ids but only 1 quantity — should abort
+        let _receipts = receipt::batch_deposit_for_receipt(
+            &mut storage_unit,
+            &depositor_char,
+            &owner_cap,
+            &vault_config,
+            &mut collection,
+            vector[LENS_TYPE_ID, AMMO_TYPE_ID],
+            vector[LENS_QUANTITY],
+            ts.ctx(),
+        );
+
+        abort 0
+    }
+
+    /// Test batch deposit with a single item (degenerate case).
+    #[test]
+    fun batch_deposit_single_item() {
+        let mut ts = ts::begin(governor());
+        let (_owner_id, depositor_id, storage_id, _nwn_id) = setup_vault_scenario(&mut ts);
+
+        mint_items_to_depositor(
+            &mut ts,
+            depositor_id,
+            storage_id,
+            LENS_ITEM_ID,
+            LENS_TYPE_ID,
+            LENS_VOLUME,
+            LENS_QUANTITY,
+        );
+
+        let depositor_owner_cap_id = {
+            ts::next_tx(&mut ts, admin());
+            let c = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let id = c.owner_cap_id();
+            ts::return_shared(c);
+            id
+        };
+
+        // Batch deposit with single entry
+        ts::next_tx(&mut ts, depositor());
+        {
+            let mut storage_unit = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            let mut depositor_char = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let (owner_cap, cap_receipt) = depositor_char.borrow_owner_cap<Character>(
+                ts::most_recent_receiving_ticket<OwnerCap<Character>>(&depositor_id),
+                ts.ctx(),
+            );
+            let vault_config = ts::take_shared<VaultConfig>(&ts);
+            let mut collection = ts::take_shared<Collection>(&ts);
+
+            let receipts = receipt::batch_deposit_for_receipt(
+                &mut storage_unit,
+                &depositor_char,
+                &owner_cap,
+                &vault_config,
+                &mut collection,
+                vector[LENS_TYPE_ID],
+                vector[LENS_QUANTITY],
+                ts.ctx(),
+            );
+
+            assert_eq!(receipts.length(), 1);
+
+            let mut receipts = receipts;
+            transfer::public_transfer(receipts.pop_back(), depositor());
+            receipts.destroy_empty();
+
+            depositor_char.return_owner_cap(owner_cap, cap_receipt);
+            ts::return_shared(depositor_char);
+            ts::return_shared(storage_unit);
+            ts::return_shared(vault_config);
+            ts::return_shared(collection);
+        };
+
+        // Verify
+        ts::next_tx(&mut ts, admin());
+        {
+            let su = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
+            assert_eq!(su.item_quantity(su.open_storage_key(), LENS_TYPE_ID), LENS_QUANTITY);
+            assert!(!su.contains_item(depositor_owner_cap_id, LENS_TYPE_ID));
+            ts::return_shared(su);
+        };
+
+        ts::end(ts);
+    }
 }

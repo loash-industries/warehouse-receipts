@@ -11,86 +11,86 @@
 ///
 /// Mint and burn are `public(package)` — only extension modules in this package can
 /// create or destroy receipts.
-module warehouse_receipts::vault {
-    use multicoin::multicoin::{Self, Collection, CollectionCap, Balance};
+module warehouse_receipts::vault;
 
-    // === Errors ===
-    #[error(code = 0)]
-    const EWrongStorageUnit: vector<u8> = b"Balance collection does not match this VaultConfig";
+use multicoin::multicoin::{Self, Collection, CollectionCap, Balance};
 
-    // === Structs ===
+// === Errors ===
+#[error(code = 0)]
+const EWrongStorageUnit: vector<u8> = b"Balance collection does not match this VaultConfig";
 
-    /// Per-StorageUnit configuration that custodies the CollectionCap.
-    /// Created once during vault initialization and shared.
-    public struct VaultConfig has key, store {
-        id: UID,
-        /// The storage unit this config is bound to
-        storage_unit_id: ID,
-        /// Admin capability for minting — custodied, not freely transferable
-        collection_cap: CollectionCap,
-    }
+// === Structs ===
 
-    // === Package Functions ===
+/// Per-StorageUnit configuration that custodies the CollectionCap.
+/// Created once during vault initialization and shared.
+public struct VaultConfig has key, store {
+    id: UID,
+    /// The storage unit this config is bound to
+    storage_unit_id: ID,
+    /// Admin capability for minting — custodied, not freely transferable
+    collection_cap: CollectionCap,
+}
 
-    /// Create a new VaultConfig and Collection for a storage unit.
-    /// Returns the VaultConfig (to be shared) and Collection (to be shared).
-    public(package) fun create_vault(
-        storage_unit_id: ID,
-        ctx: &mut TxContext,
-    ): (VaultConfig, Collection) {
-        let (collection, collection_cap) = multicoin::new_collection(ctx);
+// === Package Functions ===
 
-        let config = VaultConfig {
-            id: object::new(ctx),
-            storage_unit_id,
-            collection_cap,
-        };
+/// Create a new VaultConfig and Collection for a storage unit.
+/// Returns the VaultConfig (to be shared) and Collection (to be shared).
+public(package) fun create_vault(
+    storage_unit_id: ID,
+    ctx: &mut TxContext,
+): (VaultConfig, Collection) {
+    let (collection, collection_cap) = multicoin::new_collection(ctx);
 
-        (config, collection)
-    }
+    let config = VaultConfig {
+        id: object::new(ctx),
+        storage_unit_id,
+        collection_cap,
+    };
 
-    /// Mint a receipt (multicoin Balance) for the given type_id and quantity.
-    public(package) fun mint(
-        config: &VaultConfig,
-        collection: &mut Collection,
-        type_id: u64,
-        quantity: u64,
-        ctx: &mut TxContext,
-    ): Balance {
-        multicoin::mint_balance(&config.collection_cap, collection, type_id, quantity, ctx)
-    }
+    (config, collection)
+}
 
-    /// Burn a receipt, returning (storage_unit_id, type_id, quantity).
-    /// Verifies the balance belongs to this vault's collection.
-    public(package) fun burn(
-        config: &VaultConfig,
-        collection: &mut Collection,
-        balance: Balance,
-        ctx: &TxContext,
-    ): (ID, u64, u64) {
-        assert!(
-            balance.collection_id() == multicoin::cap_collection_id(&config.collection_cap),
-            EWrongStorageUnit,
-        );
-        let type_id = balance.asset_id();
-        let amount = multicoin::burn(collection, balance, ctx);
-        (config.storage_unit_id, type_id, amount)
-    }
+/// Mint a receipt (multicoin Balance) for the given type_id and quantity.
+public(package) fun mint(
+    config: &VaultConfig,
+    collection: &mut Collection,
+    type_id: u64,
+    quantity: u64,
+    ctx: &mut TxContext,
+): Balance {
+    multicoin::mint_balance(&config.collection_cap, collection, type_id, quantity, ctx)
+}
 
-    // === View Functions ===
+/// Burn a receipt, returning (storage_unit_id, type_id, quantity).
+/// Verifies the balance belongs to this vault's collection.
+public(package) fun burn(
+    config: &VaultConfig,
+    collection: &mut Collection,
+    balance: Balance,
+    ctx: &TxContext,
+): (ID, u64, u64) {
+    assert!(
+        balance.collection_id() == multicoin::cap_collection_id(&config.collection_cap),
+        EWrongStorageUnit,
+    );
+    let type_id = balance.asset_id();
+    let amount = multicoin::burn(collection, balance, ctx);
+    (config.storage_unit_id, type_id, amount)
+}
 
-    /// Returns the storage unit ID this vault is bound to
-    public fun storage_unit_id(config: &VaultConfig): ID {
-        config.storage_unit_id
-    }
+// === View Functions ===
 
-    /// Returns the collection ID for this vault
-    public fun collection_id(config: &VaultConfig): ID {
-        multicoin::cap_collection_id(&config.collection_cap)
-    }
+/// Returns the storage unit ID this vault is bound to
+public fun storage_unit_id(config: &VaultConfig): ID {
+    config.storage_unit_id
+}
 
-    /// Returns the total supply of a given type_id in this vault
-    public fun total_supply(collection: &Collection, type_id: u64): u64 {
-        multicoin::total_supply(collection, type_id)
-    }
+/// Returns the collection ID for this vault
+public fun collection_id(config: &VaultConfig): ID {
+    multicoin::cap_collection_id(&config.collection_cap)
+}
+
+/// Returns the total supply of a given type_id in this vault
+public fun total_supply(collection: &Collection, type_id: u64): u64 {
+    multicoin::total_supply(collection, type_id)
 }
