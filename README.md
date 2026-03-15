@@ -4,13 +4,13 @@ A Sui Move extension for [World](https://github.com/evefrontier/world-contracts)
 
 ## Overview
 
-Players deposit items from their owned inventory into a StorageUnit's extension-controlled open inventory and receive a `multicoin::Balance` receipt in return. The receipt is a standard MultiCoin balance object — it can be split, joined, transferred, or traded freely. Anyone holding the receipt can redeem it to withdraw the underlying items.
+Players deposit items from their owned inventory into a Storage Unit's extension-controlled open inventory and receive a `multicoin::Balance` receipt in return. The receipt is a standard MultiCoin balance object — it can be split, joined, transferred, or traded freely. Anyone holding the receipt can redeem it to withdraw the underlying items.
 
 ### Why Warehouse Receipts?
 
 Before _warehouse receipts_, every behavior a Storage Unit needed - item trading, lending, escrow, guild hangars - had to be built into a single monolithic extension contract. Adding a new use case meant rewriting and redeploying the extension, and the SSU owner had to trust that one contract to handle everything.
 
-Warehouse receipts decouple item custody from downstream logic by minting a _claim_ on an item deposited in an underlying storage unit. The extension's only job is converting items deposited into open inventory - into freely tradeable receipts of deposit. Once a player holds a receipt, they can interact with independent, composable systems like item exchanges, tribe mission contracts, lending platforms, or escrow services. All without the SSU extension needing to know about any of them.
+Warehouse receipts decouple item custody from downstream logic by minting a _claim_ on an item deposited in an underlying storage unit. The extension's only job is converting items deposited into open inventory - into freely tradeable receipts of deposit. Once a player holds a receipt, they can interact with independent, composable systems like item exchanges, tribe mission contracts, lending platforms, or escrow services. All without the SSU extension needing to know about any of them. Whoever ends up holding the receipt can redeem it for the item _at only the exact Storage Unit it was minted at_, taking custody of the deposited item.
 
 ### Use Cases
 
@@ -68,8 +68,11 @@ Warehouse receipts decouple item custody from downstream logic by minting a _cla
 ### Setup (SSU owner, one-time)
 
 1. Call `authorize_extension<VaultAuth>` on the StorageUnit
-2. Call `initialize_vault` — creates and shares the `Collection` + `VaultConfig`
-
+2. Call `freeze_extension` - freezes the extension in place, meaning that the storage unit owner can't reneg on the ability to redeem receipts except for 2 scenarios:
+    - Storage unit is unanchored.
+    - Storage unit is destroyed.
+3. Call `initialize_vault` — creates and shares the `Collection` + `VaultConfig`
+   
 ### Deposit (any player with items in owned inventory)
 
 1. Call `deposit_for_receipt` with the item `type_id` and `quantity`
