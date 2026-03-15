@@ -1,6 +1,6 @@
 # Warehouse Receipts
 
-A Sui Move extension for [World](https://github.com/evefrontier/world-contracts) StorageUnits that turns deposited items into tradeable bearer tokens using [MultiCoin](https://github.com/Algorithmic-Warfare/multicoin).
+A Sui Move extension for [World](https://github.com/evefrontier/world-contracts) Storage Units that turns deposited items into tradeable bearer tokens using [MultiCoin](https://github.com/Algorithmic-Warfare/multicoin).
 
 ## Overview
 
