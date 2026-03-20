@@ -1,0 +1,22 @@
+{
+    "name": "tribal_vault",
+    "scripts": {
+        "build": "sui move build",
+        "test": "sui move test -e testnet",
+        "test:utopia": "sui move test -e testnet_utopia",
+        "test:stillness": "sui move test -e testnet_stillness",
+        "fmt": "sui move format",
+        "lint": "echo 'Use move-analyzer in IDE'",
+        "prepare": "husky install"
+    },
+    "devDependencies": {
+        "husky": "^9.0.0",
+        "lint-staged": "^15.0.0"
+    },
+    "lint-staged": {
+        "/sources/**/*.move": [
+            "sui move format --install",
+            "git add"
+        ]
+    }
+}

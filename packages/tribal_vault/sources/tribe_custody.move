@@ -1,57 +1,54 @@
-/// Warehouse receipt configuration for MultiCoin-based bearer tokens.
+/// Tribal vault custody layer — manages per-tribe MultiCoin mint/burn.
 ///
-/// This module manages a per-StorageUnit `VaultConfig` that custodies a MultiCoin
-/// `CollectionCap` and links to the shared `Collection`. One `Collection` is created
-/// per StorageUnit so that `collection_id` identifies the storage unit and
-/// `asset_id` (u64) maps directly to `type_id`.
+/// Each (StorageUnit, tribe_id) pair gets its own Collection so receipts
+/// from different tribes are non-fungible with one another by construction.
 ///
-/// Receipts are standard `multicoin::Balance` objects — they inherit split, join,
-/// transfer, and all other Coin-like operations from multicoin. No custom receipt
-/// struct is needed.
-///
-/// Mint and burn are `public(package)` — only extension modules in this package can
-/// create or destroy receipts.
-module warehouse_receipts::vault {
+/// Mint and burn are `public(package)` — only `tribe_vault` in this package
+/// may create or destroy tribe receipts.
+module tribal_vault::tribe_custody {
     use multicoin::multicoin::{Self, Collection, CollectionCap, Balance};
 
     // === Errors ===
     #[error(code = 0)]
-    const EWrongStorageUnit: vector<u8> = b"Balance collection does not match this VaultConfig";
+    const EWrongVault: vector<u8> = b"Balance collection does not match this TribeVaultConfig";
 
     // === Structs ===
 
-    /// Per-StorageUnit configuration that custodies the CollectionCap.
+    /// Per-(StorageUnit, tribe_id) configuration that custodies the CollectionCap.
     /// Created once during vault initialization and shared.
-    public struct VaultConfig has key, store {
+    public struct TribeVaultConfig has key, store {
         id: UID,
         /// The storage unit this config is bound to
         storage_unit_id: ID,
+        /// The tribe this vault is locked to (set from creator's character at init)
+        tribe_id: u32,
         /// Admin capability for minting — custodied, not freely transferable
         collection_cap: CollectionCap,
     }
 
     // === Package Functions ===
 
-    /// Create a new VaultConfig and Collection for a storage unit.
-    /// Returns the VaultConfig (to be shared) and Collection (to be shared).
-    public(package) fun create_vault(
+    /// Create a new TribeVaultConfig and Collection for a (storage_unit, tribe) pair.
+    public(package) fun create_tribe_vault(
         storage_unit_id: ID,
+        tribe_id: u32,
         ctx: &mut TxContext,
-    ): (VaultConfig, Collection) {
+    ): (TribeVaultConfig, Collection) {
         let (collection, collection_cap) = multicoin::new_collection(ctx);
 
-        let config = VaultConfig {
+        let config = TribeVaultConfig {
             id: object::new(ctx),
             storage_unit_id,
+            tribe_id,
             collection_cap,
         };
 
         (config, collection)
     }
 
-    /// Mint a receipt (multicoin Balance) for the given type_id and quantity.
+    /// Mint a tribe receipt (multicoin Balance) for the given type_id and quantity.
     public(package) fun mint(
-        config: &VaultConfig,
+        config: &TribeVaultConfig,
         collection: &mut Collection,
         type_id: u64,
         quantity: u64,
@@ -60,17 +57,17 @@ module warehouse_receipts::vault {
         multicoin::mint_balance(&config.collection_cap, collection, type_id, quantity, ctx)
     }
 
-    /// Burn a receipt, returning (storage_unit_id, type_id, quantity).
+    /// Burn a tribe receipt, returning (storage_unit_id, type_id, quantity).
     /// Verifies the balance belongs to this vault's collection.
     public(package) fun burn(
-        config: &VaultConfig,
+        config: &TribeVaultConfig,
         collection: &mut Collection,
         balance: Balance,
         ctx: &TxContext,
     ): (ID, u64, u64) {
         assert!(
             balance.collection_id() == multicoin::cap_collection_id(&config.collection_cap),
-            EWrongStorageUnit,
+            EWrongVault,
         );
         let type_id = balance.asset_id();
         let amount = multicoin::burn(collection, balance, ctx);
@@ -79,17 +76,18 @@ module warehouse_receipts::vault {
 
     // === View Functions ===
 
-    /// Returns the storage unit ID this vault is bound to
-    public fun storage_unit_id(config: &VaultConfig): ID {
+    public fun storage_unit_id(config: &TribeVaultConfig): ID {
         config.storage_unit_id
     }
 
-    /// Returns the collection ID for this vault
-    public fun collection_id(config: &VaultConfig): ID {
+    public fun tribe_id(config: &TribeVaultConfig): u32 {
+        config.tribe_id
+    }
+
+    public fun collection_id(config: &TribeVaultConfig): ID {
         multicoin::cap_collection_id(&config.collection_cap)
     }
 
-    /// Returns the total supply of a given type_id in this vault
     public fun total_supply(collection: &Collection, type_id: u64): u64 {
         multicoin::total_supply(collection, type_id)
     }
