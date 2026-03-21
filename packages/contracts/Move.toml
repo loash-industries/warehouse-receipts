@@ -8,5 +8,5 @@ world = { git = "https://github.com/evefrontier/world-contracts.git", subdir = "
 multicoin = { git = "https://github.com/Algorithmic-Warfare/multicoin.git", subdir = "packages/multicoin", rev = "281bd7dab874d34acfba107a6a010c1cd03ae43a" }
 
 [environments]
-testnet_utopia = "0x0"
+testnet_utopia = "0xbc904d3d610f6136f3be2dbd019d49235854d91f0b511dcdf60fd8dc4157094f"
 testnet_stillness = "0x0"
