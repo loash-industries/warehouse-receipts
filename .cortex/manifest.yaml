@@ -1,0 +1,7 @@
+name: warehouse-receipts
+team: platform
+language: move
+framework: sui-move
+repo: loash-industries/warehouse-receipts
+deploy:
+  environments: [testnet_utopia, testnet_stillness]

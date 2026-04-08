@@ -1,0 +1,46 @@
+name: Cortex Ingest
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.cortex/**'
+
+jobs:
+  ingest:
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Package and ingest .cortex/ contents
+        env:
+          CORTEX_RELAY_URL: https://cortex-relay-dev-api.trinary.exchange
+          CORTEX_INGEST_TOKEN: ${{ secrets.CORTEX_INGEST_TOKEN }}
+        run: |
+          PAYLOAD=$(node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const cortexDir = '.cortex';
+            const files = {};
+            for (const entry of fs.readdirSync(cortexDir)) {
+              const filePath = path.join(cortexDir, entry);
+              if (fs.statSync(filePath).isFile()) {
+                files[entry] = fs.readFileSync(filePath, 'utf-8');
+              }
+            }
+            console.log(JSON.stringify({
+              repo: process.env.GITHUB_REPOSITORY,
+              sha: process.env.GITHUB_SHA,
+              type: 'service',
+              files: files
+            }));
+          ")
+
+          curl -f -X POST \
+            "${CORTEX_RELAY_URL}/ingest/service" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${CORTEX_INGEST_TOKEN}" \
+            -d "$PAYLOAD"
