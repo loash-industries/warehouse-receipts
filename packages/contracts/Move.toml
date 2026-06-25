@@ -4,9 +4,14 @@ version = "0.0.1"
 edition = "2024"
 
 [dependencies]
-world = { git = "https://github.com/evefrontier/world-contracts.git", subdir = "contracts/world", rev = "8e2e97b50fd6bbf605284bcdaae54a33a5475e89" }
-multicoin = { git = "https://github.com/Algorithmic-Warfare/multicoin.git", subdir = "packages/multicoin", rev = "c7a97f2f42ffbddbe2d44686cbc9eebd1810b8d6" }
+world = { git = "https://github.com/evefrontier/world-contracts.git", subdir = "contracts/world", rev = "32300a2ab6dc95c25ff42e30b89990492ad4dcaa" }
+multicoin = { git = "https://github.com/Algorithmic-Warfare/multicoin", subdir = "packages/multicoin", rev = "e384bbc8670b850cfb82a5e3b9fa46798b0ff6dc" }
 
 [environments]
-testnet_utopia = "0xcaefce5e087e4ace962a2964f8df4df3fc33600171d5402574ea5ec38f9f46ce"
-testnet_stillness = "0xc7c9d06e5825ba99d6ad49cdf2c62c4574daa82cba8675b354b94bca56cd32cc"
+testnet_utopia = "4c78adac"
+testnet_stillness = "4c78adac"
+testnet_wip = "4c78adac"
+
+[dep-replacements.testnet_wip]
+multicoin = { use-environment = "testnet_stillness" }
+world  = { use-environment = "testnet_stillness" }
