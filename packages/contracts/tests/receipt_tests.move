@@ -324,6 +324,7 @@ module warehouse_receipts::receipt_tests {
                 &redeemer_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -462,6 +463,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -598,6 +600,7 @@ module warehouse_receipts::receipt_tests {
                 &gift_recipient_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -794,6 +797,7 @@ module warehouse_receipts::receipt_tests {
             &depositor_char,
             &vault_config_2,
             &mut collection_2,
+            false,
             ts.ctx(),
         );
 
@@ -1049,6 +1053,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -1187,6 +1192,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -1288,6 +1294,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -1329,6 +1336,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -1455,6 +1463,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -1759,6 +1768,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -2292,6 +2302,7 @@ module warehouse_receipts::receipt_tests {
             &depositor_char,
             &vault_config_2,
             &mut collection,
+            false,
             ts.ctx(),
         );
 
@@ -2422,6 +2433,7 @@ module warehouse_receipts::receipt_tests {
                 &final_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -2496,6 +2508,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -2709,6 +2722,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 
@@ -2822,6 +2836,7 @@ module warehouse_receipts::receipt_tests {
                 &depositor_char,
                 &vault_config,
                 &mut collection,
+                false,
                 ts.ctx(),
             );
 

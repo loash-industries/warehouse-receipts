@@ -36,7 +36,7 @@ chronicle_changes({
 ## Service-Specific Notes
 
 - Two Move packages: `contracts` (warehouse_receipts) and `tribal_vault`
-- Deployed to `testnet_utopia` and `testnet_stillness` environments
+- `contracts` deployed to `testnet_stillness`; `tribal_vault` currently undeployed
 - Dependencies: `world` (EVE Frontier) and `multicoin` (Algorithmic-Warfare)
 - Move edition 2024
 

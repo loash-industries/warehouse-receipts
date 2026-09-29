@@ -42,5 +42,6 @@ SUI Move smart contract extension for EVE Frontier World Storage Units that conv
 
 ## Deployed Environments
 
-- `testnet_utopia` — `0xcaefce5e...`
-- `testnet_stillness` — `0xc7c9d06e...`
+- `testnet_stillness` — `0x134dfa96ad8bc50d4a2055cd78c91e264feb2fe79facf2d030f8bb466a80bb68` (built on world-contracts main `d33ff23` and multicoin rev `2772c26`)
+
+Note: `tribal_vault` is not currently deployed; all prior environment records (testnet_utopia, testnet_stillness, testnet_wip) were cleared during redeployment.
