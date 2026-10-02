@@ -8,7 +8,7 @@ SUI Move smart contract extension for EVE Frontier World Storage Units that conv
 
 **Receipt Redemption** — Anyone holding a receipt can redeem it to withdraw the underlying items from the exact Storage Unit it was minted at. The redeemer does not need to be the original depositor.
 
-**Vault Initialization** — SSU owners perform a one-time setup: authorize the extension, freeze it (preventing revocation), and call `initialize_vault` to create the shared `Collection` + `VaultConfig`.
+**Vault Initialization** — SSU owners perform a one-time setup: authorize the extension, freeze it (preventing revocation), and call `initialize_vault` to create the shared `Collection` + `VaultConfig`. To act on the new vault in the same PTB (e.g. register a hub operator), use the two-phase form instead: `new_vault` returns a `PendingVault` that downstream Move functions can read, and `share_vault` shares it before the transaction ends.
 
 ## Architecture
 
@@ -29,6 +29,7 @@ SUI Move smart contract extension for EVE Frontier World Storage Units that conv
 |------|--------|-------------|
 | `VaultAuth` | `receipt` | Witness for StorageUnit extension authorization |
 | `VaultConfig` | `vault` | Shared object binding a StorageUnit to its MultiCoin `CollectionCap` |
+| `PendingVault` | `receipt` | No-ability hot potato holding a new, unshared `VaultConfig` + `Collection`; consumed only by `share_vault` |
 | `Collection` | `multicoin` | Shared object tracking supply per asset type (1:1 with StorageUnit) |
 | `Balance` | `multicoin` | Owned receipt token — splittable, joinable, transferable |
 
@@ -36,7 +37,7 @@ SUI Move smart contract extension for EVE Frontier World Storage Units that conv
 
 | Event | Emitted When |
 |-------|-------------|
-| `VaultInitializedEvent` | Vault created for a StorageUnit |
+| `VaultInitializedEvent` | Vault created for a StorageUnit (`initialize_vault` / `new_vault`) |
 | `ReceiptMintedEvent` | Items deposited, receipt issued |
 | `ReceiptRedeemedEvent` | Receipt burned, items withdrawn |
 
