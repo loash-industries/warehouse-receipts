@@ -1,3 +1,7 @@
+## 2026-10-04 — review fixes for two-phase vault init
+
+Replaced the misleading `EStorageUnitMismatch` with a dedicated `ENotStorageUnitOwner` (code 2) for the OwnerCap check in `new_vault`/`initialize_vault`, and documented `new_vault`/`share_vault` and the new error in the README and both integration guides. Hardened tests: the pending-vault test now asserts `VaultInitializedEvent` by type and contents via a test-only constructor, the redeem mismatch test uses a fully usable second SSU (online, own vault, stocked) so only the storage-unit guard can refuse it, and six inline second-SSU setups were consolidated into a `create_storage_unit_at(item_offset)` helper. All 27 tests pass.
+
 ## 2026-10-02 — add two-phase vault initialization via PendingVault
 
 Added `new_vault` and `share_vault` to `receipt.move`, introducing a no-ability `PendingVault` hot potato so a newly created vault can be registered downstream (e.g. the triex hub operator adapter) within the same PTB before it is shared. `new_vault` emits `VaultInitializedEvent`; `initialize_vault` now delegates to `new_vault` + `share_vault` with the same signature, authorization and event. Compatible upgrade of the published package. Added tests for the pending-vault flow, the `to_ssu_owner = true` redeem branch and the storage-unit mismatch on redeem; `receipt` and `vault` are at 100% coverage (27 tests).

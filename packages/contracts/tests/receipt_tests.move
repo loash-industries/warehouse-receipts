@@ -2,8 +2,11 @@
 module warehouse_receipts::receipt_tests {
     use multicoin::multicoin::{Self, Collection, Balance};
     use std::{string::utf8, unit_test::assert_eq};
-    use sui::{clock, test_scenario as ts};
-    use warehouse_receipts::{receipt::{Self, VaultAuth}, vault::{Self, VaultConfig}};
+    use sui::{clock, event, test_scenario as ts};
+    use warehouse_receipts::{
+        receipt::{Self, VaultAuth, VaultInitializedEvent},
+        vault::{Self, VaultConfig}
+    };
     use world::{
         access::{OwnerCap, AdminACL},
         character::{Self, Character},
@@ -83,6 +86,16 @@ module warehouse_receipts::receipt_tests {
     }
 
     fun create_storage_unit(ts: &mut ts::Scenario, character_id: ID): (ID, ID) {
+        create_storage_unit_at(ts, character_id, 0)
+    }
+
+    /// Anchor a NetworkNode + StorageUnit for `character_id`. `item_offset`
+    /// shifts both item IDs so several storage units can coexist in one test.
+    fun create_storage_unit_at(
+        ts: &mut ts::Scenario,
+        character_id: ID,
+        item_offset: u64,
+    ): (ID, ID) {
         ts::next_tx(ts, admin());
         let mut registry = ts::take_shared<ObjectRegistry>(ts);
         let character = ts::take_shared_by_id<Character>(ts, character_id);
@@ -92,7 +105,7 @@ module warehouse_receipts::receipt_tests {
             &mut registry,
             &character,
             &admin_acl,
-            NWN_ITEM_ID,
+            NWN_ITEM_ID + item_offset,
             NWN_TYPE_ID,
             LOCATION_HASH,
             FUEL_MAX_CAPACITY,
@@ -118,7 +131,7 @@ module warehouse_receipts::receipt_tests {
                 &mut nwn,
                 &character,
                 &admin_acl,
-                STORAGE_ITEM_ID,
+                STORAGE_ITEM_ID + item_offset,
                 STORAGE_TYPE_ID,
                 MAX_CAPACITY,
                 LOCATION_HASH,
@@ -709,55 +722,7 @@ module warehouse_receipts::receipt_tests {
         };
 
         // Create second storage unit
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let admin_acl = ts::take_shared<AdminACL>(&ts);
-
-        let nwn_2 = network_node::anchor(
-            &mut registry,
-            &character,
-            &admin_acl,
-            NWN_ITEM_ID + 1,
-            NWN_TYPE_ID,
-            LOCATION_HASH,
-            FUEL_MAX_CAPACITY,
-            FUEL_BURN_RATE_IN_MS,
-            MAX_PRODUCTION,
-            ts.ctx(),
-        );
-        let nwn_id_2 = object::id(&nwn_2);
-        nwn_2.share_network_node(&admin_acl, ts.ctx());
-
-        ts::return_shared(character);
-        ts::return_shared(admin_acl);
-        ts::return_shared(registry);
-
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let mut nwn_2 = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id_2);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let storage_id_2 = {
-            let admin_acl = ts::take_shared<AdminACL>(&ts);
-            let storage_unit = storage_unit::anchor(
-                &mut registry,
-                &mut nwn_2,
-                &character,
-                &admin_acl,
-                STORAGE_ITEM_ID + 1,
-                STORAGE_TYPE_ID,
-                MAX_CAPACITY,
-                LOCATION_HASH,
-                ts.ctx(),
-            );
-            let id = object::id(&storage_unit);
-            storage_unit.share_storage_unit(&admin_acl, ts.ctx());
-            ts::return_shared(admin_acl);
-            id
-        };
-        ts::return_shared(character);
-        ts::return_shared(registry);
-        ts::return_shared(nwn_2);
+        let (storage_id_2, nwn_id_2) = create_storage_unit_at(&mut ts, owner_id, 1);
 
         online_storage_unit(&mut ts, owner(), owner_id, storage_id_2, nwn_id_2);
 
@@ -1509,53 +1474,7 @@ module warehouse_receipts::receipt_tests {
         };
 
         // Now create SSU2
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let admin_acl = ts::take_shared<AdminACL>(&ts);
-        let nwn_2 = network_node::anchor(
-            &mut registry,
-            &character,
-            &admin_acl,
-            NWN_ITEM_ID + 10,
-            NWN_TYPE_ID,
-            LOCATION_HASH,
-            FUEL_MAX_CAPACITY,
-            FUEL_BURN_RATE_IN_MS,
-            MAX_PRODUCTION,
-            ts.ctx(),
-        );
-        let nwn_id_2 = object::id(&nwn_2);
-        nwn_2.share_network_node(&admin_acl, ts.ctx());
-        ts::return_shared(character);
-        ts::return_shared(admin_acl);
-        ts::return_shared(registry);
-
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let mut nwn_2 = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id_2);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let storage_id_2 = {
-            let admin_acl = ts::take_shared<AdminACL>(&ts);
-            let su = storage_unit::anchor(
-                &mut registry,
-                &mut nwn_2,
-                &character,
-                &admin_acl,
-                STORAGE_ITEM_ID + 10,
-                STORAGE_TYPE_ID,
-                MAX_CAPACITY,
-                LOCATION_HASH,
-                ts.ctx(),
-            );
-            let id = object::id(&su);
-            su.share_storage_unit(&admin_acl, ts.ctx());
-            ts::return_shared(admin_acl);
-            id
-        };
-        ts::return_shared(character);
-        ts::return_shared(registry);
-        ts::return_shared(nwn_2);
+        let (storage_id_2, nwn_id_2) = create_storage_unit_at(&mut ts, owner_id, 10);
 
         online_storage_unit(&mut ts, owner(), owner_id, storage_id_2, nwn_id_2);
 
@@ -1830,53 +1749,7 @@ module warehouse_receipts::receipt_tests {
         };
 
         // Create SSU2 with vault
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let admin_acl = ts::take_shared<AdminACL>(&ts);
-        let nwn_2 = network_node::anchor(
-            &mut registry,
-            &character,
-            &admin_acl,
-            NWN_ITEM_ID + 20,
-            NWN_TYPE_ID,
-            LOCATION_HASH,
-            FUEL_MAX_CAPACITY,
-            FUEL_BURN_RATE_IN_MS,
-            MAX_PRODUCTION,
-            ts.ctx(),
-        );
-        let nwn_id_2 = object::id(&nwn_2);
-        nwn_2.share_network_node(&admin_acl, ts.ctx());
-        ts::return_shared(character);
-        ts::return_shared(admin_acl);
-        ts::return_shared(registry);
-
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let mut nwn_2 = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id_2);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let storage_id_2 = {
-            let admin_acl = ts::take_shared<AdminACL>(&ts);
-            let su = storage_unit::anchor(
-                &mut registry,
-                &mut nwn_2,
-                &character,
-                &admin_acl,
-                STORAGE_ITEM_ID + 20,
-                STORAGE_TYPE_ID,
-                MAX_CAPACITY,
-                LOCATION_HASH,
-                ts.ctx(),
-            );
-            let id = object::id(&su);
-            su.share_storage_unit(&admin_acl, ts.ctx());
-            ts::return_shared(admin_acl);
-            id
-        };
-        ts::return_shared(character);
-        ts::return_shared(registry);
-        ts::return_shared(nwn_2);
+        let (storage_id_2, nwn_id_2) = create_storage_unit_at(&mut ts, owner_id, 20);
 
         online_storage_unit(&mut ts, owner(), owner_id, storage_id_2, nwn_id_2);
 
@@ -2050,7 +1923,7 @@ module warehouse_receipts::receipt_tests {
     #[test]
     #[
         expected_failure(
-            abort_code = receipt::EStorageUnitMismatch,
+            abort_code = receipt::ENotStorageUnitOwner,
             location = warehouse_receipts::receipt,
         ),
     ]
@@ -2066,53 +1939,7 @@ module warehouse_receipts::receipt_tests {
         online_storage_unit(&mut ts, owner(), owner_id, storage_id_1, nwn_id_1);
 
         // Create SSU2 (also owned by same owner, but separate cap)
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let admin_acl = ts::take_shared<AdminACL>(&ts);
-        let nwn_2 = network_node::anchor(
-            &mut registry,
-            &character,
-            &admin_acl,
-            NWN_ITEM_ID + 40,
-            NWN_TYPE_ID,
-            LOCATION_HASH,
-            FUEL_MAX_CAPACITY,
-            FUEL_BURN_RATE_IN_MS,
-            MAX_PRODUCTION,
-            ts.ctx(),
-        );
-        let nwn_id_2 = object::id(&nwn_2);
-        nwn_2.share_network_node(&admin_acl, ts.ctx());
-        ts::return_shared(character);
-        ts::return_shared(admin_acl);
-        ts::return_shared(registry);
-
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let mut nwn_2 = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id_2);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let _storage_id_2 = {
-            let admin_acl = ts::take_shared<AdminACL>(&ts);
-            let su = storage_unit::anchor(
-                &mut registry,
-                &mut nwn_2,
-                &character,
-                &admin_acl,
-                STORAGE_ITEM_ID + 40,
-                STORAGE_TYPE_ID,
-                MAX_CAPACITY,
-                LOCATION_HASH,
-                ts.ctx(),
-            );
-            let id = object::id(&su);
-            su.share_storage_unit(&admin_acl, ts.ctx());
-            ts::return_shared(admin_acl);
-            id
-        };
-        ts::return_shared(character);
-        ts::return_shared(registry);
-        ts::return_shared(nwn_2);
+        let (_storage_id_2, _nwn_id_2) = create_storage_unit_at(&mut ts, owner_id, 40);
 
         // Owner borrows OwnerCap<StorageUnit> for SSU2, tries to use on SSU1
         ts::next_tx(&mut ts, owner());
@@ -2160,53 +1987,7 @@ module warehouse_receipts::receipt_tests {
         };
 
         // Create SSU2
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let admin_acl = ts::take_shared<AdminACL>(&ts);
-        let nwn_2 = network_node::anchor(
-            &mut registry,
-            &character,
-            &admin_acl,
-            NWN_ITEM_ID + 30,
-            NWN_TYPE_ID,
-            LOCATION_HASH,
-            FUEL_MAX_CAPACITY,
-            FUEL_BURN_RATE_IN_MS,
-            MAX_PRODUCTION,
-            ts.ctx(),
-        );
-        let nwn_id_2 = object::id(&nwn_2);
-        nwn_2.share_network_node(&admin_acl, ts.ctx());
-        ts::return_shared(character);
-        ts::return_shared(admin_acl);
-        ts::return_shared(registry);
-
-        ts::next_tx(&mut ts, admin());
-        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-        let mut nwn_2 = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id_2);
-        let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-        let storage_id_2 = {
-            let admin_acl = ts::take_shared<AdminACL>(&ts);
-            let su = storage_unit::anchor(
-                &mut registry,
-                &mut nwn_2,
-                &character,
-                &admin_acl,
-                STORAGE_ITEM_ID + 30,
-                STORAGE_TYPE_ID,
-                MAX_CAPACITY,
-                LOCATION_HASH,
-                ts.ctx(),
-            );
-            let id = object::id(&su);
-            su.share_storage_unit(&admin_acl, ts.ctx());
-            ts::return_shared(admin_acl);
-            id
-        };
-        ts::return_shared(character);
-        ts::return_shared(registry);
-        ts::return_shared(nwn_2);
+        let (storage_id_2, nwn_id_2) = create_storage_unit_at(&mut ts, owner_id, 30);
 
         online_storage_unit(&mut ts, owner(), owner_id, storage_id_2, nwn_id_2);
 
@@ -3012,6 +2793,19 @@ module warehouse_receipts::receipt_tests {
             let collection_id = object::id(collection);
             pending.share_vault();
 
+            // Exactly one `VaultInitializedEvent`, describing this vault.
+            // Matched by type so events other modules emit this tx don't count.
+            assert_eq!(
+                event::events_by_type<VaultInitializedEvent>(),
+                vector[
+                    receipt::vault_initialized_event_for_testing(
+                        storage_id,
+                        collection_id,
+                        config_id,
+                    ),
+                ],
+            );
+
             character.return_owner_cap(owner_cap, cap_receipt);
             ts::return_shared(storage_unit);
             ts::return_shared(character);
@@ -3022,7 +2816,6 @@ module warehouse_receipts::receipt_tests {
         // `shared()` also lists the storage unit and character returned this tx.
         assert!(effects.shared().contains(&config_id));
         assert!(effects.shared().contains(&collection_id));
-        assert_eq!(effects.num_user_events(), 1);
 
         let config = ts::take_shared_by_id<VaultConfig>(&ts, config_id);
         let collection = ts::take_shared_by_id<Collection>(&ts, collection_id);
@@ -3095,8 +2888,10 @@ module warehouse_receipts::receipt_tests {
     }
 
     /// The receipt's own vault and collection, presented at a different
-    /// storage unit: `vault::burn` accepts the pair, and `redeem_receipt`'s
-    /// storage-unit check is what refuses it.
+    /// storage unit that is online, has `VaultAuth` authorized, and holds the
+    /// same item type in its open inventory. A withdrawal there would succeed,
+    /// and `vault::burn` accepts the matching pair, so `redeem_receipt`'s
+    /// storage-unit check is the only thing that can refuse it.
     #[test]
     #[expected_failure(abort_code = receipt::EStorageUnitMismatch, location = warehouse_receipts::receipt)]
     fun redeem_with_matching_vault_at_another_storage_unit_aborts() {
@@ -3113,50 +2908,85 @@ module warehouse_receipts::receipt_tests {
         );
         deposit_and_keep_receipt(&mut ts, depositor_id, storage_id, LENS_TYPE_ID, LENS_QUANTITY);
 
-        // A second storage unit, anchored but never given a vault.
-        ts::next_tx(&mut ts, admin());
-        let other_storage_id = {
-            let mut registry = ts::take_shared<ObjectRegistry>(&ts);
-            let character = ts::take_shared_by_id<Character>(&ts, owner_id);
-            let admin_acl = ts::take_shared<AdminACL>(&ts);
-            let mut nwn = network_node::anchor(
-                &mut registry,
-                &character,
-                &admin_acl,
-                NWN_ITEM_ID + 50,
-                NWN_TYPE_ID,
-                LOCATION_HASH,
-                FUEL_MAX_CAPACITY,
-                FUEL_BURN_RATE_IN_MS,
-                MAX_PRODUCTION,
+        // Pin down the receipt and its vault before a second vault exists.
+        ts::next_tx(&mut ts, depositor());
+        let (receipt_id, config_id, collection_id) = {
+            let deposit_receipt = ts::take_from_sender<Balance>(&ts);
+            let config = ts::take_shared<VaultConfig>(&ts);
+            let receipt_id = object::id(&deposit_receipt);
+            let config_id = object::id(&config);
+            let collection_id = config.collection_id();
+            ts::return_to_sender(&ts, deposit_receipt);
+            ts::return_shared(config);
+            (receipt_id, config_id, collection_id)
+        };
+
+        // A second storage unit with its own vault.
+        let (other_storage_id, other_nwn_id) = create_storage_unit_at(&mut ts, owner_id, 50);
+        online_storage_unit(&mut ts, owner(), owner_id, other_storage_id, other_nwn_id);
+        ts::next_tx(&mut ts, owner());
+        let (other_config_id, other_collection_id) = {
+            let mut character = ts::take_shared_by_id<Character>(&ts, owner_id);
+            let (owner_cap, cap_receipt) = character.borrow_owner_cap<StorageUnit>(
+                ts::most_recent_receiving_ticket<OwnerCap<StorageUnit>>(&owner_id),
                 ts.ctx(),
             );
-            let su = storage_unit::anchor(
-                &mut registry,
-                &mut nwn,
-                &character,
-                &admin_acl,
-                STORAGE_ITEM_ID + 50,
-                STORAGE_TYPE_ID,
-                MAX_CAPACITY,
-                LOCATION_HASH,
-                ts.ctx(),
-            );
-            let id = object::id(&su);
-            su.share_storage_unit(&admin_acl, ts.ctx());
-            nwn.share_network_node(&admin_acl, ts.ctx());
-            ts::return_shared(admin_acl);
+            let mut su = ts::take_shared_by_id<StorageUnit>(&ts, other_storage_id);
+            su.authorize_extension<VaultAuth>(&owner_cap);
+            let pending = receipt::new_vault(&su, &owner_cap, ts.ctx());
+            let config_id = object::id(pending.pending_vault_config());
+            let collection_id = object::id(pending.pending_vault_collection());
+            pending.share_vault();
+            character.return_owner_cap(owner_cap, cap_receipt);
+            ts::return_shared(su);
             ts::return_shared(character);
-            ts::return_shared(registry);
-            id
+            (config_id, collection_id)
+        };
+
+        // Stock its open inventory with the same item type.
+        mint_items_to_depositor(
+            &mut ts,
+            depositor_id,
+            other_storage_id,
+            LENS_ITEM_ID,
+            LENS_TYPE_ID,
+            LENS_VOLUME,
+            LENS_QUANTITY,
+        );
+        ts::next_tx(&mut ts, depositor());
+        {
+            let mut su = ts::take_shared_by_id<StorageUnit>(&ts, other_storage_id);
+            let mut depositor_char = ts::take_shared_by_id<Character>(&ts, depositor_id);
+            let (owner_cap, cap_receipt) = depositor_char.borrow_owner_cap<Character>(
+                ts::most_recent_receiving_ticket<OwnerCap<Character>>(&depositor_id),
+                ts.ctx(),
+            );
+            let config = ts::take_shared_by_id<VaultConfig>(&ts, other_config_id);
+            let mut collection = ts::take_shared_by_id<Collection>(&ts, other_collection_id);
+            let other_receipt = receipt::deposit_for_receipt(
+                &mut su,
+                &depositor_char,
+                &owner_cap,
+                &config,
+                &mut collection,
+                LENS_TYPE_ID,
+                LENS_QUANTITY,
+                ts.ctx(),
+            );
+            transfer::public_transfer(other_receipt, depositor());
+            depositor_char.return_owner_cap(owner_cap, cap_receipt);
+            ts::return_shared(depositor_char);
+            ts::return_shared(su);
+            ts::return_shared(config);
+            ts::return_shared(collection);
         };
 
         ts::next_tx(&mut ts, depositor());
         let mut other_storage_unit = ts::take_shared_by_id<StorageUnit>(&ts, other_storage_id);
         let depositor_char = ts::take_shared_by_id<Character>(&ts, depositor_id);
-        let vault_config = ts::take_shared<VaultConfig>(&ts);
-        let mut collection = ts::take_shared<Collection>(&ts);
-        let deposit_receipt = ts::take_from_sender<Balance>(&ts);
+        let vault_config = ts::take_shared_by_id<VaultConfig>(&ts, config_id);
+        let mut collection = ts::take_shared_by_id<Collection>(&ts, collection_id);
+        let deposit_receipt = ts::take_from_sender_by_id<Balance>(&ts, receipt_id);
 
         receipt::redeem_receipt(
             deposit_receipt,

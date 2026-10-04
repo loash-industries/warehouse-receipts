@@ -86,6 +86,29 @@ Check the transaction output for `VaultInitializedEvent` — it contains the `va
 sui client tx-block <TX_DIGEST> --json | jq '.events'
 ```
 
+### Acting on the new vault in the same transaction
+
+`initialize_vault` shares the `VaultConfig` and `Collection` inside the call, and a PTB cannot pass an object shared earlier in the same transaction to a later command. To register a fresh vault with another protocol in one transaction, use the two-phase form: `new_vault` returns a `PendingVault`, a downstream Move function reads it by reference (`&PendingVault`), and `share_vault` shares both objects.
+
+```bash
+sui client ptb \
+  ... borrow owner_cap and authorize_extension as above ... \
+  --move-call "${WAREHOUSE_PKG}::receipt::new_vault" \
+    @${STORAGE_UNIT} \
+    owner_cap \
+  --assign pending \
+  --move-call "${DOWNSTREAM_PKG}::adapter::register_vault" \
+    pending \
+  --move-call "${WAREHOUSE_PKG}::receipt::share_vault" \
+    pending \
+  ... freeze_extension_config and return_owner_cap as above ... \
+  --gas-budget 50000000
+```
+
+- `share_vault` must be called in the same PTB. `PendingVault` has no abilities, so a PTB that never consumes it fails with `UnusedValueWithoutDrop`.
+- `pending_vault_config` / `pending_vault_collection` return references, so they can't be called as PTB commands. Only a Move function that takes `&PendingVault` can read the new objects.
+- `VaultInitializedEvent` is emitted by `new_vault`, so it appears before any event the downstream registration emits.
+
 ---
 
 ## 3. Deposit Items for a Receipt
@@ -316,6 +339,7 @@ sui client events \
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `EStorageUnitMismatch` | VaultConfig doesn't match the StorageUnit passed | Ensure you're using the correct VaultConfig for this SSU |
+| `ENotStorageUnitOwner` | OwnerCap passed to `initialize_vault` / `new_vault` is for a different StorageUnit | Borrow the `OwnerCap<StorageUnit>` for this SSU |
 | `EWrongStorageUnit` | Receipt's collection doesn't match the VaultConfig | You're redeeming at the wrong vault — use the vault that issued the receipt |
 | `EExtensionNotAuthorized` | `authorize_extension<VaultAuth>` not called | SSU owner must authorize the extension first (step 2) |
 | `EAssemblyNotAuthorized` | Wrong OwnerCap used | Ensure the OwnerCap is authorized for this StorageUnit |

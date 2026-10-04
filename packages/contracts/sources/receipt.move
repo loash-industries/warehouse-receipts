@@ -34,6 +34,8 @@ module warehouse_receipts::receipt {
     #[error(code = 1)]
     const EBatchLengthMismatch: vector<u8> =
         b"type_ids and quantities vectors must have the same length";
+    #[error(code = 2)]
+    const ENotStorageUnitOwner: vector<u8> = b"OwnerCap does not authorize this storage unit";
 
     // === Structs ===
 
@@ -110,7 +112,7 @@ module warehouse_receipts::receipt {
         ctx: &mut TxContext,
     ): PendingVault {
         let storage_unit_id = object::id(storage_unit);
-        assert!(world::access::is_authorized(owner_cap, storage_unit_id), EStorageUnitMismatch);
+        assert!(world::access::is_authorized(owner_cap, storage_unit_id), ENotStorageUnitOwner);
 
         let (config, collection) = vault::create_vault(storage_unit_id, ctx);
         event::emit(VaultInitializedEvent {
@@ -313,5 +315,16 @@ module warehouse_receipts::receipt {
             i = i + 1;
         };
         receipts.destroy_empty();
+    }
+
+    // === Test Helpers ===
+
+    #[test_only]
+    public fun vault_initialized_event_for_testing(
+        storage_unit_id: ID,
+        collection_id: ID,
+        vault_config_id: ID,
+    ): VaultInitializedEvent {
+        VaultInitializedEvent { storage_unit_id, collection_id, vault_config_id }
     }
 }
