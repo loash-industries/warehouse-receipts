@@ -43,6 +43,6 @@ SUI Move smart contract extension for EVE Frontier World Storage Units that conv
 
 ## Deployed Environments
 
-- `testnet_stillness` — `0x134dfa96ad8bc50d4a2055cd78c91e264feb2fe79facf2d030f8bb466a80bb68` (built on world-contracts main `d33ff23` and multicoin rev `2772c26`)
+- `testnet_stillness` — original-id `0x134dfa96ad8bc50d4a2055cd78c91e264feb2fe79facf2d030f8bb466a80bb68`, published-at (v2) `0xcfd8ce37426e9ed1578795f538e8e5c6a5275d509c651d96586dfb877998194c` (built on world-contracts main `d33ff23` and multicoin rev `2772c26`). Type tags use the original-id; call v2-only functions (`new_vault`, `share_vault`, `pending_vault_*`) via published-at
 
 Note: `tribal_vault` is not currently deployed; all prior environment records (testnet_utopia, testnet_stillness, testnet_wip) were cleared during redeployment.
