@@ -2893,7 +2893,12 @@ module warehouse_receipts::receipt_tests {
     /// and `vault::burn` accepts the matching pair, so `redeem_receipt`'s
     /// storage-unit check is the only thing that can refuse it.
     #[test]
-    #[expected_failure(abort_code = receipt::EStorageUnitMismatch, location = warehouse_receipts::receipt)]
+    #[
+        expected_failure(
+            abort_code = receipt::EStorageUnitMismatch,
+            location = warehouse_receipts::receipt,
+        ),
+    ]
     fun redeem_with_matching_vault_at_another_storage_unit_aborts() {
         let mut ts = ts::begin(governor());
         let (owner_id, depositor_id, storage_id, _nwn_id) = setup_vault_scenario(&mut ts);
