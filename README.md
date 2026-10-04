@@ -29,6 +29,7 @@ Warehouse receipts decouple item custody from downstream logic by minting a _cla
 │  VaultAuth          deposit_for_receipt()         │
 │  (extension          redeem_receipt()             │
 │   witness)           initialize_vault()           │
+│  PendingVault        new_vault() / share_vault()  │
 └──────────────┬───────────────────────────────────┘
                │ public(package)
 ┌──────────────▼───────────────────────────────────┐
@@ -60,6 +61,7 @@ Warehouse receipts decouple item custody from downstream logic by minting a _cla
 |------|--------|-------------|
 | `VaultAuth` | `receipt` | Witness for StorageUnit extension authorization |
 | `VaultConfig` | `vault` | Shared object binding a StorageUnit to its MultiCoin `CollectionCap` |
+| `PendingVault` | `receipt` | Hot potato (no abilities) holding a new, unshared `VaultConfig` + `Collection`; consumed only by `share_vault` |
 | `Collection` | `multicoin` | Shared object tracking supply per asset type (1:1 with StorageUnit) |
 | `Balance` | `multicoin` | Owned receipt token — splittable, joinable, transferable |
 
@@ -72,6 +74,7 @@ Warehouse receipts decouple item custody from downstream logic by minting a _cla
     - Storage unit is unanchored.
     - Storage unit is destroyed.
 3. Call `initialize_vault` — creates and shares the `Collection` + `VaultConfig`
+   - To act on the new vault in the same PTB (e.g. register it with a downstream protocol), use the two-phase form instead: `new_vault` returns a `PendingVault`, pass it by reference to the downstream Move function, then call `share_vault`. `share_vault` must run in the same PTB — `PendingVault` has no abilities, so a transaction that leaves it unconsumed fails. See the integration guides.
    
 ### Deposit (any player with items in owned inventory)
 
@@ -99,7 +102,7 @@ transfer::public_transfer(balance, recipient)  // Transfer to another address
 
 | Event | Emitted When |
 |-------|-------------|
-| `VaultInitializedEvent` | Vault created for a StorageUnit |
+| `VaultInitializedEvent` | Vault created for a StorageUnit (`initialize_vault` / `new_vault`) |
 | `ReceiptMintedEvent` | Items deposited, receipt issued |
 | `ReceiptRedeemedEvent` | Receipt burned, items withdrawn |
 
@@ -108,6 +111,7 @@ transfer::public_transfer(balance, recipient)  // Transfer to another address
 | Constant | Module | Meaning |
 |----------|--------|---------|
 | `EStorageUnitMismatch` | `receipt` | VaultConfig or receipt doesn't match the target StorageUnit |
+| `ENotStorageUnitOwner` | `receipt` | OwnerCap passed to `initialize_vault` / `new_vault` doesn't authorize the StorageUnit |
 | `EWrongStorageUnit` | `vault` | Balance's collection doesn't match the VaultConfig's CollectionCap |
 
 ## Build & Test

@@ -10,6 +10,8 @@
 ///
 /// Flow:
 /// 1. SSU owner calls `initialize_vault` to create the Collection + VaultConfig
+///    (or `new_vault` → … → `share_vault` to act on the new VaultConfig in the
+///    same PTB before it is shared)
 /// 2. SSU owner calls `authorize_extension<VaultAuth>` on the StorageUnit
 /// 3. Player calls `deposit_for_receipt` to move items from owned → open inventory
 /// 4. Extension mints a `multicoin::Balance` and returns it to the caller
@@ -32,11 +34,29 @@ module warehouse_receipts::receipt {
     #[error(code = 1)]
     const EBatchLengthMismatch: vector<u8> =
         b"type_ids and quantities vectors must have the same length";
+    #[error(code = 2)]
+    const ENotStorageUnitOwner: vector<u8> = b"OwnerCap does not authorize this storage unit";
 
     // === Structs ===
 
     /// Witness type for extension authorization
     public struct VaultAuth has drop {}
+
+    /// A vault created by `new_vault` that the same transaction must share.
+    ///
+    /// `initialize_vault` shares the new `VaultConfig` and `Collection` inside
+    /// the call, and a PTB cannot pass an object shared earlier in the same
+    /// transaction to a later command — so nothing could act on a fresh vault
+    /// (register it with a downstream protocol, say) until a second
+    /// transaction. Holding both objects here lets a downstream *Move*
+    /// function take `&PendingVault` and read them first; a PTB cannot call
+    /// the reference-returning accessors directly. No abilities: the only way
+    /// to consume it is `share_vault`, so a vault can never be left owned,
+    /// wrapped, or dropped half-initialized.
+    public struct PendingVault {
+        config: VaultConfig,
+        collection: Collection,
+    }
 
     // === Events ===
 
@@ -73,21 +93,54 @@ module warehouse_receipts::receipt {
         owner_cap: &OwnerCap<StorageUnit>,
         ctx: &mut TxContext,
     ) {
+        new_vault(storage_unit, owner_cap, ctx).share_vault();
+    }
+
+    /// Create the vault for a StorageUnit without sharing it yet, so later
+    /// commands in the same PTB can pass the `PendingVault` to Move functions
+    /// that read the new `VaultConfig` and `Collection`. The returned
+    /// `PendingVault` must be passed to `share_vault` before the transaction
+    /// ends. Same authorization as `initialize_vault`.
+    ///
+    /// `VaultInitializedEvent` is emitted here rather than at `share_vault`, so
+    /// it precedes any event a downstream registration emits for the same
+    /// vault in the same transaction. The hot potato guarantees the share
+    /// follows; if anything aborts, the event goes with the transaction.
+    public fun new_vault(
+        storage_unit: &StorageUnit,
+        owner_cap: &OwnerCap<StorageUnit>,
+        ctx: &mut TxContext,
+    ): PendingVault {
         let storage_unit_id = object::id(storage_unit);
-        assert!(world::access::is_authorized(owner_cap, storage_unit_id), EStorageUnitMismatch);
+        assert!(world::access::is_authorized(owner_cap, storage_unit_id), ENotStorageUnitOwner);
 
         let (config, collection) = vault::create_vault(storage_unit_id, ctx);
-        let collection_id = object::id(&collection);
-        let vault_config_id = object::id(&config);
-
-        transfer::public_share_object(collection);
-        transfer::public_share_object(config);
-
         event::emit(VaultInitializedEvent {
             storage_unit_id,
-            collection_id,
-            vault_config_id,
+            collection_id: object::id(&collection),
+            vault_config_id: object::id(&config),
         });
+        PendingVault { config, collection }
+    }
+
+    /// The pending vault's config, for Move callers acting on it before it is
+    /// shared. Returns a reference, so it is not callable as a PTB command.
+    public fun pending_vault_config(self: &PendingVault): &VaultConfig {
+        &self.config
+    }
+
+    /// The pending vault's collection, for Move callers acting on it before it
+    /// is shared. Returns a reference, so it is not callable as a PTB command.
+    public fun pending_vault_collection(self: &PendingVault): &Collection {
+        &self.collection
+    }
+
+    /// Share a pending vault's `Collection` and `VaultConfig`, completing
+    /// initialization. (`new_vault` already emitted `VaultInitializedEvent`.)
+    public fun share_vault(self: PendingVault) {
+        let PendingVault { config, collection } = self;
+        transfer::public_share_object(collection);
+        transfer::public_share_object(config);
     }
 
     /// Deposit items from player's owned inventory into the extension-controlled
@@ -262,5 +315,16 @@ module warehouse_receipts::receipt {
             i = i + 1;
         };
         receipts.destroy_empty();
+    }
+
+    // === Test Helpers ===
+
+    #[test_only]
+    public fun vault_initialized_event_for_testing(
+        storage_unit_id: ID,
+        collection_id: ID,
+        vault_config_id: ID,
+    ): VaultInitializedEvent {
+        VaultInitializedEvent { storage_unit_id, collection_id, vault_config_id }
     }
 }
