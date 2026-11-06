@@ -1,3 +1,7 @@
+## 2026-11-06 — CI pinned by SHA (DEVOPS-30)
+
+Every `uses:` in `ci.yml` and `cortex-ingest.yaml` is pinned to a full commit SHA with the version in a comment (public-workflows v0.3.0 for cortex-ingest), and the CI checkout no longer persists credentials.
+
 ## 2026-10-04 — upgrade warehouse_receipts to v2 on testnet_stillness
 
 Compatible upgrade of `warehouse_receipts` on testnet_stillness to version 2 (published-at `0xcfd8ce37426e9ed1578795f538e8e5c6a5275d509c651d96586dfb877998194c`; original-id `0x134dfa96...` and UpgradeCap `0x83fc5d72...` unchanged), shipping the two-phase vault init (`new_vault` / `PendingVault` / `share_vault`) and `ENotStorageUnitOwner`. Upgrade tx `7b77NZdXJavJGFhaaoVCDc2sGJmRyjRcMw3DFZZobVkc`, built with sui 1.81.0. Updated `Published.toml`.
