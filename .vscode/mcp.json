@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "cortex": {
+      "url": "https://cortex-relay-dev-api.trinary.exchange/mcp",
+      "type": "http",
+      "headers": {
+        "Authorization": "Bearer ${input:cortexMcpKey}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "cortexMcpKey",
+      "type": "promptString",
+      "description": "Cortex MCP API key",
+      "password": true
+    }
+  ]
+}
