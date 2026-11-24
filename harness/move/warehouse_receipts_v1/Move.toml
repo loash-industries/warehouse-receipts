@@ -1,0 +1,16 @@
+# warehouse_receipts ported to world-contracts v1 (dev) + TRIEX-160 guard.
+[package]
+name = "warehouse_receipts"
+edition = "2024"
+
+[dependencies]
+core = { local = "../../../../../world-contracts/contracts/core" }
+inventory = { local = "../../../../../world-contracts/contracts/inventory" }
+power = { local = "../../../../../world-contracts/contracts/power" }
+variant = { local = "../../../../../world-contracts/contracts/variant" }
+multicoin = { local = "../multicoin" }
+
+[environments]
+dev = "4c78adac"
+test = "4c78adac"
+uat = "4c78adac"

@@ -1,0 +1,11 @@
+# Harness copy of Algorithmic-Warfare/multicoin @ 2772c26 (sources byte-identical).
+# Manifest only: drops the explicit Sui git dep / [addresses] so it builds
+# against the localnet framework with the new package manager.
+[package]
+name = "multicoin"
+edition = "2024"
+
+[environments]
+dev = "4c78adac"
+test = "4c78adac"
+uat = "4c78adac"
