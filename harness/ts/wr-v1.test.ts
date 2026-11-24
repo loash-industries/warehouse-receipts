@@ -5,7 +5,7 @@
  *
  * Every `it` is one claim. "EXPECT-FAIL" claims pass when the attack aborts.
  * "RISK" claims pass when the attack SUCCEEDS: they show a gap the design can't
- * close on dev. Findings are written to harness/out/report.json.
+ * close on dev. The rest are flows that must work. Findings are written to harness/out/report.json.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +14,7 @@ import type { Signer } from '@mysten/sui/cryptography'
 import { Transaction, type TransactionArgument } from '@mysten/sui/transactions'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { ExecutedTransaction } from '../../../../world-contracts/sdk/world-sdk/src/client.js'
+import { adminAcl } from '../../../../world-contracts/sdk/world-sdk/src/config/shared-objects.js'
 import {
   addSponsors,
   completeRequest,
@@ -100,6 +101,7 @@ const SHORT_FUEL = 25n // kg, ~25s
 type Finding = { claim: string; kind: 'guarantee' | 'risk' | 'flow'; result: string; detail?: string }
 const findings: Finding[] = []
 const record = (f: Finding) => findings.push(f)
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 describe('warehouse-receipts on world-contracts dev (localnet)', () => {
   const { config, client } = loadLocalnetWorld()
@@ -181,11 +183,6 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
   const bal = (entity: string) => readBalance(client, config, { entity, componentId: INV, key: ORE_KEY })
   const fuelOf = async (entity: string) =>
     BigInt(bcs.u64().parse(await view((tx) => projectedFuel(tx, config, tx.object(entity)))))
-
-  async function ownerOf(objectId: string): Promise<string> {
-    const { object } = await client.getObject({ objectId })
-    return JSON.stringify(object.owner)
-  }
 
   /** Admin: claim a creation with a Shell, grid, generator, fuel bay and an Inventory. */
   function buildCreation(tx: Transaction, inGameId: bigint, inventoryType: bigint) {
@@ -287,6 +284,51 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
       arguments: [tx.object(wr.vaultRegistry), tx.object(entityId), tx.object(cap), tx.pure.u64(INV)],
     })
     tx.moveCall({ target: `${WR}::receipt::share_vault`, arguments: [pending] })
+  }
+
+  /** Anyone: refuel sealed vault `v` through the game's `deposit_fuel` action. */
+  function vaultRefuel(tx: Transaction, v: string, kg: bigint, action = 'deposit_fuel') {
+    tx.moveCall({
+      target: `${WR}::upkeep::refuel`,
+      arguments: [
+        tx.object(vaults[v].config),
+        tx.object(v),
+        tx.object(adminAcl(config).id),
+        tx.pure.string(action),
+        tx.pure.u64(BAY),
+        tx.object(fuel),
+        tx.pure.u64(kg * MASS_UNIT),
+        tx.object.clock(),
+      ],
+    })
+  }
+
+  /** Anyone: switch sealed vault `v`'s grid back on through the game's `set_power_grid` action. */
+  function vaultPowerOn(tx: Transaction, v: string, action = 'set_power_grid') {
+    tx.moveCall({
+      target: `${WR}::upkeep::power_on`,
+      arguments: [tx.object(vaults[v].config), tx.object(v), tx.pure.string(action), tx.object.clock()],
+    })
+  }
+
+  /** The entity's controller type name (e.g. `<pkg>::vault::VaultController`), if any. */
+  const controllerOf = async (entity: string) =>
+    bcs
+      .option(bcs.struct('TypeName', { name: bcs.string() }))
+      .parse(await view((tx) => tx.moveCall({ target: `${coreId}::entity::controller`, arguments: [tx.object(entity)] })))
+      ?.name ?? null
+  const capIdOf = async (entity: string) =>
+    bcs
+      .option(bcs.Address)
+      .parse(await view((tx) => tx.moveCall({ target: `${coreId}::entity::access_cap_id`, arguments: [tx.object(entity)] })))
+  /** Whether object `id` still exists on chain. */
+  async function exists(objectId: string): Promise<boolean> {
+    try {
+      await client.getObject({ objectId })
+      return true
+    } catch {
+      return false
+    }
   }
 
   function depositForReceipt(tx: Transaction, v: string, item: TransactionArgument): TransactionArgument {
@@ -399,10 +441,12 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
   })
 
   // ── 1. vault creation + seal + TRIEX-160 ────────────────────────────────────
-  it('owner turns their storage unit into a sealed vault; its key ends up parked on the entity', async () => {
+  it('owner turns their storage unit into a sealed vault; the cap is destroyed and the vault package is its controller', async () => {
     await sealVault(A, V, caps.V)
-    const owner = await ownerOf(caps.V)
-    expect(owner.toLowerCase()).toContain(V.slice(2).toLowerCase())
+    expect(await exists(caps.V)).toBe(false)
+    expect(await capIdOf(V)).toBeNull()
+    const controller = await controllerOf(V)
+    expect(controller).toMatch(/::vault::VaultController$/)
 
     const addr = bcs.Address.parse(
       await view((tx) =>
@@ -413,7 +457,7 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
       ),
     )
     expect(addr).toBe(vaults[V].config)
-    record({ claim: 'create_vault seals the entity (AccessCap object-owned by the entity itself)', kind: 'guarantee', result: 'PASS', detail: `cap owner ${owner}` })
+    record({ claim: 'create_vault seals the entity (AccessCap destroyed, VaultController is the owner)', kind: 'guarantee', result: 'PASS', detail: `controller ${controller}` })
     record({ claim: 'VaultConfig id is derivable from entity id (TRIEX-160 derived object)', kind: 'guarantee', result: 'PASS' })
   })
 
@@ -461,7 +505,7 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
   })
 
   // ── 3. owner / third-party bypass attempts (all must fail) ──────────────────
-  it('EXPECT-FAIL: the former owner cannot add a "steal" action (cap is parked)', async () => {
+  it('EXPECT-FAIL: the former owner cannot add a "steal" action (their cap no longer exists)', async () => {
     const tx = new Transaction()
     const e = tx.object(V)
     enableAction(tx, config, e, 'steal', [withdrawRequirement(tx, config, INV, {})], caps.V)
@@ -516,91 +560,92 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     record({ claim: 'redemption requires the ship to be docked at the vault (admin-recorded state)', kind: 'flow', result: 'PASS', detail: msg.slice(0, 160) })
   })
 
-  // ── 4. residual risks the design cannot close on dev ────────────────────────
-  it('RISK: an owner action created BEFORE sealing survives the seal and drains receipt-backed items', async () => {
-    // Owner A plants a public withdraw action on VB, then seals it as a vault.
+  it('EXPECT-FAIL: an owner who planted an action before sealing cannot seal (vault must start with no owner actions)', async () => {
     const plant = new Transaction()
     enableAction(plant, config, plant.object(VB), 'backdoor', [withdrawRequirement(plant, config, INV, {})], caps.VB)
     await expectSuccess(client, plant, A)
-    await sealVault(A, VB, caps.VB)
-
-    // B deposits 5 ORE into VB and gets a receipt. Everything looks normal on-chain.
-    const receiptVB = await depositFromB(VB, 5n)
-
-    // C (not the owner, holds no receipt) drains VB through the backdoor.
-    const drain = new Transaction()
-    const e = drain.object(VB)
-    const r = interact(drain, config, e, 'backdoor')
-    const loot = withdraw(drain, config, e, r, { key: ORE_KEY, quantity: 5n })
-    completeRequest(drain, config, e, r)
-    loadShip(drain, SHIP_C, caps.SHIP_C, loot)
-    await expectSuccess(client, drain, C)
-    expect(await bal(VB)).toBe(0n)
-    expect(await supply(VB)).toBe(5n) // 5 receipts, 0 backing
-
-    // B's receipt is now unredeemable.
     const tx = new Transaction()
-    loadShip(tx, SHIP_B, caps.SHIP_B, redeem(tx, VB, tx.object(receiptVB)))
-    const msg = await expectFails(tx, B.toSuiAddress())
-    record({
-      claim: 'pre-existing owner actions are invisible to warehouse_receipts and survive the seal',
-      kind: 'risk',
-      result: 'RISK_CONFIRMED',
-      detail: `VB drained 5/5 with 5 receipts outstanding; redeem now fails: ${msg.slice(0, 160)}`,
-    })
-
-    // Cross-vault check while we have a foreign receipt: VB's receipt can't redeem at V.
-    const cross = new Transaction()
-    loadShip(cross, SHIP_B, caps.SHIP_B, redeem(cross, V, cross.object(receiptVB)))
-    const crossMsg = await expectFails(cross, B.toSuiAddress(), /EWrongCollection/)
-    record({ claim: "a vault rejects another vault's receipts", kind: 'guarantee', result: 'PASS', detail: crossMsg.slice(0, 160) })
+    createVault(tx, VB, caps.VB)
+    const msg = await expectFails(tx, A.toSuiAddress(), /EOwnerActionsExist/)
+    record({ claim: 'pre-seal owner actions block create_vault (closes the pre-seal backdoor)', kind: 'guarantee', result: 'PASS', detail: msg.slice(0, 160) })
   })
 
-  it('RISK: a sealed vault cannot be refueled by anyone; when fuel runs out receipts are unredeemable', async () => {
+  it("EXPECT-FAIL: a vault rejects another vault's receipts", async () => {
+    const receiptVT = await depositFromB(VT, 1n)
+    const cross = new Transaction()
+    loadShip(cross, SHIP_B, caps.SHIP_B, redeem(cross, V, cross.object(receiptVT)))
+    const msg = await expectFails(cross, B.toSuiAddress(), /EWrongCollection/)
+    record({ claim: "a vault rejects another vault's receipts", kind: 'guarantee', result: 'PASS', detail: msg.slice(0, 160) })
+  })
+
+  // ── 4. liveness: a sealed vault can be kept running by anyone ──────────────
+  it('after it runs dry, anyone can refuel a sealed vault and bring it back online; receipts redeem again', async () => {
     await powerOn(A, VS, caps.VS, SHORT_FUEL)
     await sealVault(A, VS, caps.VS)
     const receiptVS = await depositFromB(VS, 3n)
 
     const deadline = Date.now() + 90_000
-    while ((await fuelOf(VS)) > 0n && Date.now() < deadline) await new Promise((r) => setTimeout(r, 2_000))
+    while ((await fuelOf(VS)) > 0n && Date.now() < deadline) await sleep(2_000)
     expect(await fuelOf(VS)).toBe(0n)
 
-    const tx = new Transaction()
-    loadShip(tx, SHIP_B, caps.SHIP_B, redeem(tx, VS, tx.object(receiptVS)))
-    const redeemMsg = await expectFails(tx, B.toSuiAddress())
+    // Dry: running out tripped the grid, the airlock has no power, redeeming aborts.
+    const dry = new Transaction()
+    loadShip(dry, SHIP_B, caps.SHIP_B, redeem(dry, VS, dry.object(receiptVS)))
+    const dryMsg = await expectFails(dry, B.toSuiAddress())
 
-    // deposit_fuel pushes an owner requirement from inside the handler; the cap is parked.
-    const refuelOwner = new Transaction()
-    refuel(refuelOwner, VS, caps.VS, LONG_FUEL)
-    const ownerMsg = await expectFails(refuelOwner, A.toSuiAddress())
-    record({
-      claim: 'sealed vault liveness: nobody can refuel it (deposit_fuel hard-codes the owner check)',
-      kind: 'risk',
-      result: 'RISK_CONFIRMED',
-      detail: `redeem after fuel-out: ${redeemMsg.slice(0, 120)} | refuel by former owner: ${ownerMsg.slice(0, 120)}`,
-    })
+    // The former owner has nothing to act with: their cap was destroyed.
+    const direct = new Transaction()
+    refuel(direct, VS, caps.VS, LONG_FUEL)
+    const directMsg = await expectFails(direct, A.toSuiAddress())
 
-    // The only recovery is admin revoke + re-mint, which un-seals the vault (next test).
-    const revoke = new Transaction()
-    revokeAccess(revoke, config, VS)
-    await expectSuccess(client, revoke)
-    const fresh = await mintCap(VS, A.toSuiAddress())
-    const re = new Transaction()
-    refuel(re, VS, fresh, LONG_FUEL)
-    switchGridOn(re, VS, fresh) // running dry tripped the grid
-    await expectSponsored(client, re, A)
+    // C, a stranger with no stake in VS, refuels it and switches the tripped grid
+    // back on, in one transaction (game-sponsored, like any deposit_fuel).
+    const revive = new Transaction()
+    vaultRefuel(revive, VS, LONG_FUEL)
+    vaultPowerOn(revive, VS)
+    await expectSponsored(client, revive, C)
+    expect(await fuelOf(VS)).toBeGreaterThan(0n)
+
+    // Back online: B redeems all 3 ORE.
     const retry = new Transaction()
     loadShip(retry, SHIP_B, caps.SHIP_B, redeem(retry, VS, retry.object(receiptVS)))
     await expectSuccess(client, retry, B)
-    record({ claim: 'recovery from fuel-out requires the admin to re-mint an owner cap', kind: 'risk', result: 'RISK_CONFIRMED', detail: 'revoke + mint_access + refuel + grid on, then redeem succeeds' })
+    expect(await bal(VS)).toBe(0n)
+    expect(await supply(VS)).toBe(0n)
+
+    // Still sealed: no cap, same controller.
+    expect(await capIdOf(VS)).toBeNull()
+    expect(await controllerOf(VS)).toMatch(/::vault::VaultController$/)
+    record({
+      claim: 'sealed vault liveness: anyone can refuel and power it back on, and it stays sealed',
+      kind: 'guarantee',
+      result: 'PASS',
+      detail: `dry redeem: ${dryMsg.slice(0, 100)} | former owner direct refuel: ${directMsg.slice(0, 100)} | C: upkeep::refuel + upkeep::power_on in one sponsored tx, then B redeems 3/3`,
+    })
   }, 180_000)
 
+  it('EXPECT-FAIL: upkeep refuel without a game sponsor aborts (fuel is not backed by an item yet)', async () => {
+    const tx = new Transaction()
+    vaultRefuel(tx, V, 1n)
+    const msg = await expectFails(tx, C.toSuiAddress(), /EUnauthorizedSponsor/)
+    record({ claim: 'upkeep::refuel needs a game sponsor, like any deposit_fuel', kind: 'flow', result: 'PASS', detail: msg.slice(0, 160) })
+  })
+
+  it('EXPECT-FAIL: upkeep cannot point the controller at a non-power action', async () => {
+    const tx = new Transaction()
+    vaultPowerOn(tx, V, 'wr_redeem')
+    const msg = await expectFails(tx, C.toSuiAddress())
+    record({ claim: 'the controller only satisfies the power handler upkeep itself runs', kind: 'guarantee', result: 'PASS', detail: msg.slice(0, 160) })
+  })
+
+  // ── 5. residual risks the design cannot close on dev ────────────────────────
   it('RISK: admin re-mint un-seals a vault; the new owner can add a drain action', async () => {
     // VT was re-minted to A in the TRIEX-160 test.
+    expect(await controllerOf(VT)).toBeNull() // re-mint cleared the controller
     const tx = new Transaction()
     enableAction(tx, config, tx.object(VT), 'steal', [withdrawRequirement(tx, config, INV, {})], caps.VT2)
     await expectSuccess(client, tx, A)
-    record({ claim: 'admin revoke_access + mint_access hands back full owner control', kind: 'risk', result: 'RISK_CONFIRMED' })
+    record({ claim: 'admin revoke_access + mint_access clears the controller and hands back full owner control', kind: 'risk', result: 'RISK_CONFIRMED' })
   })
 
   it('RISK: an admin action with the same name shadows wr_redeem and drains without receipts', async () => {

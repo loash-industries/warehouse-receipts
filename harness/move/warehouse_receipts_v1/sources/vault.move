@@ -5,6 +5,11 @@
 /// so a second vault for the same entity aborts, and anyone can derive the
 /// config's address from the entity id without an index.
 ///
+/// `create_vault` hands each vault entity to `VaultController`: the entity's
+/// `AccessCap` is retired, and only this package can act as the entity's owner,
+/// through `control_permit`. Only `warehouse_receipts::upkeep` does, for power
+/// upkeep anyone may run.
+///
 /// The config custodies the MultiCoin `CollectionCap`. Each vault gets its own
 /// `Collection`, so `collection_id` identifies the vault. A receipt's `asset_id`
 /// is derived from the item's `VariantKey` (`asset_id`), and the config keeps
@@ -12,6 +17,7 @@
 module warehouse_receipts::vault;
 
 use multicoin::multicoin::{Self, Balance, Collection, CollectionCap};
+use std::internal::{Self, Permit};
 use sui::{bcs, derived_object, hash, table::{Self, Table}};
 use variant::variant::VariantKey;
 
@@ -30,6 +36,10 @@ const EAssetIdCollision: vector<u8> = b"Two variants derive the same receipt ass
 public struct VaultRegistry has key {
     id: UID,
 }
+
+/// The controller type every vault entity is handed to. Only this package can
+/// mint its `Permit`, so only this package can act as a vault entity's owner.
+public struct VaultController() has drop;
 
 /// Derivation key: the world entity a vault is bound to.
 public struct VaultKey(ID) has copy, drop, store;
@@ -72,6 +82,10 @@ public(package) fun create(
 
 public(package) fun share(config: VaultConfig) {
     transfer::share_object(config);
+}
+
+public(package) fun control_permit(): Permit<VaultController> {
+    internal::permit()
 }
 
 /// Mint a receipt for `quantity` of variant `key`, recording its asset id.
