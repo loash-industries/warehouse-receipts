@@ -3,26 +3,28 @@
 /// Minting a receipt locks items in the vault entity's Inventory, and burning a
 /// receipt is the only way to free them:
 ///
-/// - `create_vault` takes the entity's `AccessCap` by value, enables exactly two
-///   owner actions, `wr_deposit = [Mint, Deposit(C)]` and
-///   `wr_redeem = [Redeem, Withdraw(C)]`, then parks the cap on the entity itself.
-///   A parked cap can only be borrowed by presenting the entity's current cap,
-///   which is that same parked cap, so no owner can ever enable, disable, or
-///   rewrite an action again. The action set is frozen.
+/// - `create_vault` takes the entity's `AccessCap` by value, checks the entity
+///   has no owner actions yet, enables exactly two, `wr_deposit = [Mint, Deposit(C)]`
+///   and `wr_redeem = [Redeem, Withdraw(C)]`, then parks the cap on the vault's
+///   `VaultConfig`. Only this package can borrow it from there
+///   (`access_cap::borrow_parked` needs the config's `&mut UID`), and it only
+///   does so in `warehouse_receipts::upkeep`, to refuel and power the vault. No
+///   one can ever enable, disable, or rewrite an action again. The action set is
+///   frozen, but the vault can still be kept running.
 /// - `Mint` and `Redeem` are requirement types only this module can satisfy
 ///   (it alone can mint their `Permit`). Each handler pops its marker and then
 ///   does the inventory move itself, so the receipt amount and the item amount
 ///   are bound inside one Move call. Nothing else can pop the marker, so the
 ///   Deposit/Withdraw behind it can't be reached on its own.
 ///
-/// What this cannot stop (world-contracts `dev` exposes no way to check or
-/// prevent it): owner actions that already existed before `create_vault`, and
-/// the game admin (admin actions shadow owner actions; `inventory::uninstall`,
-/// `migrate`, `revoke_access` + `mint_access`, `entity::delete`).
+/// What this cannot stop: the game admin (admin actions shadow owner actions;
+/// `inventory::uninstall`, `migrate`, `revoke_access` + `mint_access`,
+/// `entity::delete`), and whoever can upgrade this package, since an upgrade
+/// could add code that borrows the parked cap. Publish it immutable.
 module warehouse_receipts::receipt;
 
 use core::{
-    access_cap::{Self, AccessCap},
+    access_cap::AccessCap,
     action,
     entity::Entity,
     request::Request,
@@ -46,6 +48,8 @@ const ECapNotTransferable: vector<u8> = b"AccessCap must be transferable so it c
 const ENoInventory: vector<u8> = b"Entity has no Inventory at this component id";
 #[error(code = 3)]
 const EWrongEntity: vector<u8> = b"Vault is bound to a different entity";
+#[error(code = 4)]
+const EOwnerActionsExist: vector<u8> = b"Entity already has owner actions; a vault must start with none";
 
 // === Constants ===
 
@@ -98,8 +102,9 @@ public struct ReceiptRedeemedEvent has copy, drop {
 // === Public Functions ===
 
 /// Turn `entity` into a receipt vault over its Inventory `inventory_id`, and seal
-/// it. Consumes the owner's `AccessCap`: after this call nobody holds a usable
-/// owner cap for `entity`. One vault per entity (TRIEX-160).
+/// it. Consumes the owner's `AccessCap` and parks it on the new `VaultConfig`:
+/// after this call no person holds a usable owner cap for `entity`. One vault
+/// per entity (TRIEX-160).
 public fun create_vault(
     registry: &mut VaultRegistry,
     entity: &mut Entity,
@@ -116,6 +121,8 @@ public fun create_vault(
     assert!(entity.has_component_with_type<Inventory>(inventory_id), ENoInventory);
 
     let (config, collection) = vault::create(registry, entity_id, inventory_id, ctx);
+    // An owner action left over from before the seal would survive it.
+    assert!(entity.owner_action_names().is_empty(), EOwnerActionsExist);
 
     let deposit = action::new(vector[
         mint_requirement(),
@@ -133,8 +140,8 @@ public fun create_vault(
     entity.verify_owner(&mut req, &cap);
     entity.complete_request(req);
 
-    // Seal: park the cap on the entity it controls.
-    access_cap::transfer_access(cap, entity_id.to_address());
+    // Seal: park the cap on the vault config. Only `upkeep` borrows it back.
+    vault::park_cap(&config, cap);
 
     event::emit(VaultInitializedEvent {
         entity_id,

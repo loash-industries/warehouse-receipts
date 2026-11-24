@@ -5,14 +5,19 @@
 /// so a second vault for the same entity aborts, and anyone can derive the
 /// config's address from the entity id without an index.
 ///
+/// The config also holds the vault entity's `AccessCap`, parked on its address.
+/// Only this package can borrow it back (`borrow_cap`), and only
+/// `warehouse_receipts::upkeep` does, for power upkeep anyone may run.
+///
 /// The config custodies the MultiCoin `CollectionCap`. Each vault gets its own
 /// `Collection`, so `collection_id` identifies the vault. A receipt's `asset_id`
 /// is derived from the item's `VariantKey` (`asset_id`), and the config keeps
 /// the reverse map so a redeem knows which variant to free.
 module warehouse_receipts::vault;
 
+use core::access_cap::{Self, AccessCap, ReturnReceipt};
 use multicoin::multicoin::{Self, Balance, Collection, CollectionCap};
-use sui::{bcs, derived_object, hash, table::{Self, Table}};
+use sui::{bcs, derived_object, hash, table::{Self, Table}, transfer::Receiving};
 use variant::variant::VariantKey;
 
 // === Errors ===
@@ -72,6 +77,25 @@ public(package) fun create(
 
 public(package) fun share(config: VaultConfig) {
     transfer::share_object(config);
+}
+
+/// Park the vault entity's cap on this config's address. From here only
+/// `borrow_cap` can take it out, and only for the rest of one transaction.
+public(package) fun park_cap(config: &VaultConfig, cap: AccessCap) {
+    access_cap::transfer_access(cap, object::id(config).to_address());
+}
+
+/// Borrow the parked cap. The `ReturnReceipt` makes the caller return it with
+/// `return_cap` before the transaction ends.
+public(package) fun borrow_cap(
+    config: &mut VaultConfig,
+    ticket: Receiving<AccessCap>,
+): (AccessCap, ReturnReceipt) {
+    access_cap::borrow_parked(&mut config.id, ticket)
+}
+
+public(package) fun return_cap(config: &mut VaultConfig, cap: AccessCap, receipt: ReturnReceipt) {
+    access_cap::return_to(&mut config.id, cap, receipt);
 }
 
 /// Mint a receipt for `quantity` of variant `key`, recording its asset id.
