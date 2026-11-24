@@ -12,7 +12,7 @@ LOCALNET="$WC/agentictools/skills/localnet-integration/run.sh"
 
 case "${1:-}" in
   --down) exec "$LOCALNET" down ;;
-  --fresh) "$LOCALNET" down || true; rm -f "$HARNESS/out/wr.localnet.json" ;;
+  --fresh) "$LOCALNET" down || true; rm -f "$HARNESS/out/wr.localnet.json"; shift ;;
 esac
 
 if ! docker ps -q -f "name=^world-localnet$" | grep -q .; then

@@ -33,6 +33,7 @@ use multicoin::multicoin::{Balance, Collection};
 use power::grid_load;
 use std::{internal, string::{Self, String}};
 use sui::{clock::Clock, event};
+use variant::variant::VariantKey;
 use warehouse_receipts::vault::{Self, VaultConfig, VaultRegistry};
 
 // === Errors ===
@@ -79,7 +80,8 @@ public struct ReceiptMintedEvent has copy, drop {
     entity_id: ID,
     collection_id: ID,
     balance_id: ID,
-    type_id: u64,
+    asset_id: u64,
+    key: VariantKey,
     quantity: u64,
     depositor: address,
 }
@@ -87,7 +89,8 @@ public struct ReceiptMintedEvent has copy, drop {
 public struct ReceiptRedeemedEvent has copy, drop {
     entity_id: ID,
     collection_id: ID,
-    type_id: u64,
+    asset_id: u64,
+    key: VariantKey,
     quantity: u64,
     redeemer: address,
 }
@@ -116,7 +119,7 @@ public fun create_vault(
 
     let deposit = action::new(vector[
         mint_requirement(),
-        inventory::deposit_requirement(inventory_id, option::none(), option::none(), option::none()),
+        inventory::deposit_requirement(inventory_id, option::none(), option::none(), option::none(), option::none()),
     ]);
     let mut req = entity.enable_action(deposit_action(), deposit, ctx);
     entity.verify_owner(&mut req, &cap);
@@ -124,7 +127,7 @@ public fun create_vault(
 
     let redeem = action::new(vector[
         redeem_requirement(),
-        inventory::withdraw_requirement(inventory_id, option::none(), option::none(), option::none()),
+        inventory::withdraw_requirement(inventory_id, option::none(), option::none(), option::none(), option::none()),
     ]);
     let mut req = entity.enable_action(redeem_action(), redeem, ctx);
     entity.verify_owner(&mut req, &cap);
@@ -156,11 +159,11 @@ public fun pending_vault_config(self: &PendingVault): &VaultConfig { &self.confi
 public fun pending_vault_collection(self: &PendingVault): &Collection { &self.collection }
 
 /// Handler for `wr_deposit`: lock `item` in the vault Inventory and mint a
-/// receipt for exactly its type and quantity. `req` comes from
+/// receipt for exactly its variant and quantity. `req` comes from
 /// `entity.interact("wr_deposit")`. The transaction must already hold a docking
 /// proof linking the vault and `item`'s source.
 public fun deposit_for_receipt(
-    config: &VaultConfig,
+    config: &mut VaultConfig,
     collection: &mut Collection,
     entity: &mut Entity,
     req: &mut Request,
@@ -172,24 +175,25 @@ public fun deposit_for_receipt(
     let (_requirement, frame) = req.take_next(internal::permit<Mint>());
     frame.destroy_empty_frame();
 
-    let type_id = item.type_id();
+    let key = item.key();
     let quantity = item.quantity();
-    inventory::deposit(entity, req, item, ctx);
+    inventory::deposit(entity, req, item);
     grid_load::assert_online(entity, req, clock);
 
-    let receipt = vault::mint(config, collection, type_id, quantity, ctx);
+    let receipt = vault::mint(config, collection, key, quantity, ctx);
     event::emit(ReceiptMintedEvent {
         entity_id: entity.id(),
         collection_id: config.collection_id(),
         balance_id: object::id(&receipt),
-        type_id,
+        asset_id: vault::asset_id(&key),
+        key,
         quantity,
         depositor: ctx.sender(),
     });
     receipt
 }
 
-/// Handler for `wr_redeem`: burn `receipt` and free exactly its type and
+/// Handler for `wr_redeem`: burn `receipt` and free exactly its variant and
 /// quantity from the vault Inventory as an `Item`. The caller must deposit the
 /// `Item` somewhere in the same transaction (e.g. its docked ship).
 public fun redeem(
@@ -205,14 +209,15 @@ public fun redeem(
     let (_requirement, frame) = req.take_next(internal::permit<Redeem>());
     frame.destroy_empty_frame();
 
-    let (type_id, quantity) = vault::burn(config, collection, receipt, ctx);
-    let item = inventory::withdraw(entity, req, type_id, quantity, ctx);
+    let (key, quantity) = vault::burn(config, collection, receipt, ctx);
+    let item = inventory::withdraw(entity, req, key, quantity, ctx);
     grid_load::assert_online(entity, req, clock);
 
     event::emit(ReceiptRedeemedEvent {
         entity_id: entity.id(),
         collection_id: config.collection_id(),
-        type_id,
+        asset_id: vault::asset_id(&key),
+        key,
         quantity,
         redeemer: ctx.sender(),
     });

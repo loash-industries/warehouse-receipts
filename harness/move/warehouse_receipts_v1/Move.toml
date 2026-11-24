@@ -7,6 +7,7 @@ edition = "2024"
 core = { local = "../../../../../world-contracts/contracts/core" }
 inventory = { local = "../../../../../world-contracts/contracts/inventory" }
 power = { local = "../../../../../world-contracts/contracts/power" }
+variant = { local = "../../../../../world-contracts/contracts/variant" }
 multicoin = { local = "../multicoin" }
 
 [environments]

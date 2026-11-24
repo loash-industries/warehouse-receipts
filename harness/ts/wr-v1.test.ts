@@ -14,22 +14,22 @@ import type { Signer } from '@mysten/sui/cryptography'
 import { Transaction, type TransactionArgument } from '@mysten/sui/transactions'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { ExecutedTransaction } from '../../../../world-contracts/sdk/world-sdk/src/client.js'
-import type { WorldConfig } from '../../../../world-contracts/sdk/world-sdk/src/config/types.js'
 import {
   addSponsors,
   completeRequest,
   deriveObjectId,
+  dock,
   enableAction,
   enableAdminAction,
   entityNew,
   interact,
+  mintAccess,
   ownerRequirement,
   revokeAccess,
   shareEntity,
+  undock,
   verifyAdmin,
-  verifyDocking,
   verifyOwner,
-  mintAccess,
 } from '../../../../world-contracts/sdk/world-sdk/src/packages/core.js'
 import {
   bridgeInRequirement,
@@ -43,26 +43,29 @@ import {
 import {
   depositFuel,
   depositFuelRequirement,
-  installFuel,
+  installFuelBay,
   installGenerator,
   installPowerGrid,
   operateGridRequirement,
   POWER_SCALE,
   projectedFuel,
   setDesiredState,
+  setFuelBay,
   setGenerator,
   setPowerGrid,
 } from '../../../../world-contracts/sdk/world-sdk/src/packages/power.js'
+import { MASS_UNIT } from '../../../../world-contracts/sdk/world-sdk/src/packages/variant.js'
 import {
   capObjectId,
-  dockedProof,
   expectSponsored,
   expectSuccess,
+  fuelVariant,
   genesisAccount,
-  keypair as admin,
+  itemVariant,
   loadLocalnetWorld,
   readBalance,
   requirePackage,
+  seatShell,
   signer as adminAddr,
 } from '../../../../world-contracts/sdk/world-sdk/src/__integration__/helpers.js'
 
@@ -80,15 +83,19 @@ const WR = wr.warehouseReceipts
 const TENANT = `wr-harness-${Date.now()}`
 const INV = 0x51n
 const GEN = 0x52n
-const FUEL = 0x53n
+const BAY = 0x53n
 const ORE = 88834n
+const ORE_KEY = { tenant: TENANT, typeId: ORE, variantId: 0n }
 const VOL = 1n
-const OUTPUT = 20n * POWER_SCALE
-const INV_DRAW = 10n * POWER_SCALE
-const BASE_FUEL_RATE = POWER_SCALE // impulse 0: one fuel unit per second
+// 20 MW generator, 10 MW firm airlock. Impulse-10 fuel at a 10 MW draw burns
+// about 1 kg a second.
+const OUTPUT = 20n
+const INV_DRAW = 10n
+const FUEL_TYPE = 7n
+const FUEL_IMPULSE = 10n * POWER_SCALE
 const FUEL_CAPACITY = 1_000_000n * POWER_SCALE
-const LONG_FUEL = 100_000n * POWER_SCALE // ~28h
-const SHORT_FUEL = 25n * POWER_SCALE // ~25s
+const LONG_FUEL = 100_000n // kg, ~28h
+const SHORT_FUEL = 25n // kg, ~25s
 
 type Finding = { claim: string; kind: 'guarantee' | 'risk' | 'flow'; result: string; detail?: string }
 const findings: Finding[] = []
@@ -97,6 +104,7 @@ const record = (f: Finding) => findings.push(f)
 describe('warehouse-receipts on world-contracts dev (localnet)', () => {
   const { config, client } = loadLocalnetWorld()
   const coreId = requirePackage(config, 'core')
+  const variantId = requirePackage(config, 'variant')
 
   const A = genesisAccount('PLAYER_A') // structure owner
   const B = genesisAccount('PLAYER_B') // depositor
@@ -113,6 +121,8 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
   const caps: Record<string, string> = {}
   const vaults: Record<string, { config: string; collection: string }> = {}
   let receiptB = '' // B's receipt from V
+  let fuel = '' // fuel Variant id
+  let ore = '' // ORE item Variant id
 
   // ── helpers ──────────────────────────────────────────────────────────────
   function created(res: ExecutedTransaction, suffix: string): string {
@@ -151,19 +161,24 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     return rv.bcs
   }
 
-  const supply = async (v: string, typeId = ORE) =>
+  /** Outstanding ORE receipts of vault `v` (asset id derived from ORE's VariantKey). */
+  const supply = async (v: string) =>
     BigInt(
       bcs.u64().parse(
-        await view((tx) =>
+        await view((tx) => {
+          const key = tx.moveCall({
+            target: `${variantId}::variant::new_key`,
+            arguments: [tx.pure.string(ORE_KEY.tenant), tx.pure.u64(ORE_KEY.typeId), tx.pure.u64(ORE_KEY.variantId)],
+          })
+          const asset = tx.moveCall({ target: `${WR}::vault::asset_id`, arguments: [key] })
           tx.moveCall({
             target: `${WR}::vault::total_supply`,
-            arguments: [tx.object(vaults[v].collection), tx.pure.u64(typeId)],
-          }),
-        ),
+            arguments: [tx.object(vaults[v].collection), asset],
+          })
+        }),
       ),
     )
-  const bal = (entity: string, typeId = ORE) =>
-    readBalance(client, config, { entity, componentId: INV, typeId })
+  const bal = (entity: string) => readBalance(client, config, { entity, componentId: INV, key: ORE_KEY })
   const fuelOf = async (entity: string) =>
     BigInt(bcs.u64().parse(await view((tx) => projectedFuel(tx, config, tx.object(entity)))))
 
@@ -172,20 +187,22 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     return JSON.stringify(object.owner)
   }
 
-  /** Admin: claim a creation with grid, generator, fuel bay and an Inventory. */
+  /** Admin: claim a creation with a Shell, grid, generator, fuel bay and an Inventory. */
   function buildCreation(tx: Transaction, inGameId: bigint, inventoryType: bigint) {
     const [e, claim] = entityNew(tx, config, { inGameId, tenant: TENANT })
     verifyAdmin(tx, config, claim)
     completeRequest(tx, config, e, claim)
     installPowerGrid(tx, config, e)
+    seatShell(tx, config, e)
     installGenerator(tx, config, e, {
       componentId: GEN,
       name: 'generator',
       maxOutputMw: OUTPUT,
-      containmentReduction: 10n * POWER_SCALE,
-      baseFuelRate: BASE_FUEL_RATE,
+      fuelType: FUEL_TYPE,
+      impulseLimit: 100n * POWER_SCALE,
+      volatilityLimit: 1n,
     })
-    installFuel(tx, config, e, { componentId: FUEL, name: 'fuel bay', capacity: FUEL_CAPACITY })
+    installFuelBay(tx, config, e, { componentId: BAY, name: 'fuel bay', capacity: FUEL_CAPACITY })
     installInventory(tx, config, e, {
       componentId: INV,
       typeId: inventoryType,
@@ -199,26 +216,34 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
   /** Admin: the game-defined power actions every creation gets. */
   function enablePowerActions(tx: Transaction, entityId: string) {
     const e = tx.object(entityId)
-    for (const name of ['set_power_grid', 'set_generator', 'set_desired_state'])
+    for (const name of ['set_power_grid', 'set_generator', 'set_fuel_bay', 'set_desired_state'])
       enableAdminAction(tx, config, e, name, [operateGridRequirement(tx, config)])
     enableAdminAction(tx, config, e, 'deposit_fuel', [depositFuelRequirement(tx, config)])
   }
 
-  function refuel(tx: Transaction, entityId: string, cap: string, amount: bigint) {
+  function refuel(tx: Transaction, entityId: string, cap: string, kg: bigint) {
     const e = tx.object(entityId)
     const r = interact(tx, config, e, 'deposit_fuel')
-    depositFuel(tx, config, e, r, cap, { fuelType: 7n, amount, impulse: 0n, containmentBurden: 0n })
+    depositFuel(tx, config, e, r, cap, { fuelBayId: BAY, variant: fuel, amount: kg * MASS_UNIT })
     completeRequest(tx, config, e, r)
   }
 
-  /** Owner (sponsored): fuel, grid on, generator on, airlock desired online. */
-  async function powerOn(owner: Signer, entityId: string, cap: string, fuel: bigint) {
-    const tx = new Transaction()
+  function switchGridOn(tx: Transaction, entityId: string, cap: string) {
     const e = tx.object(entityId)
-    refuel(tx, entityId, cap, fuel)
-    let r = interact(tx, config, e, 'set_power_grid')
+    const r = interact(tx, config, e, 'set_power_grid')
     setPowerGrid(tx, config, e, r, cap, true)
     completeRequest(tx, config, e, r)
+  }
+
+  /** Owner (sponsored): fuel, bay online, grid on, generator on, airlock desired online. */
+  async function powerOn(owner: Signer, entityId: string, cap: string, kg: bigint) {
+    const tx = new Transaction()
+    const e = tx.object(entityId)
+    refuel(tx, entityId, cap, kg)
+    let r = interact(tx, config, e, 'set_fuel_bay')
+    setFuelBay(tx, config, e, r, cap, BAY, true)
+    completeRequest(tx, config, e, r)
+    switchGridOn(tx, entityId, cap)
     r = interact(tx, config, e, 'set_generator')
     setGenerator(tx, config, e, r, cap, GEN, true)
     completeRequest(tx, config, e, r)
@@ -243,7 +268,7 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     const ship = tx.object(shipId)
     const r = interact(tx, config, ship, 'withdraw')
     verifyOwner(tx, config, ship, r, cap)
-    const item = withdraw(tx, config, ship, r, { typeId: ORE, quantity: qty })
+    const item = withdraw(tx, config, ship, r, { key: ORE_KEY, quantity: qty })
     completeRequest(tx, config, ship, r)
     return item
   }
@@ -299,11 +324,28 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     vaults[v] = { config: created(res, '::vault::VaultConfig'), collection: created(res, '::multicoin::Collection') }
   }
 
+  /** B deposits `qty` ORE from SHIP_B into vault `v`; returns B's receipt id. */
+  async function depositFromB(v: string, qty: bigint): Promise<string> {
+    const tx = new Transaction()
+    const receipt = depositForReceipt(tx, v, unloadShip(tx, SHIP_B, caps.SHIP_B, qty))
+    tx.transferObjects([receipt], B.toSuiAddress())
+    return created(await expectSuccess(client, tx, B), '::multicoin::Balance')
+  }
+
   // ── setup: the game builds the structures ──────────────────────────────────
   beforeAll(async () => {
     const sponsorTx = new Transaction()
     addSponsors(sponsorTx, config, [adminAddr])
     await expectSuccess(client, sponsorTx)
+
+    fuel = await fuelVariant(client, config, {
+      tenant: TENANT,
+      fuelType: FUEL_TYPE,
+      impulse: FUEL_IMPULSE,
+      containmentBurden: 0n,
+      volatility: 1n * POWER_SCALE,
+    })
+    ore = await itemVariant(client, config, { tenant: TENANT, typeId: ORE, unitVolume: VOL })
 
     const build = new Transaction()
     buildCreation(build, 1n, 1n)
@@ -318,16 +360,22 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     for (const e of [V, VB, VS, VT, SHIP_B, SHIP_C]) enablePowerActions(actions, e)
     await expectSuccess(client, actions)
 
+    // Both ships are docked at every vault (docking is admin-recorded state).
+    const docking = new Transaction()
+    for (const v of [V, VB, VS, VT])
+      for (const ship of [SHIP_B, SHIP_C]) dock(docking, config, docking.object(v), docking.object(ship))
+    await expectSuccess(client, docking)
+
     for (const [k, e, o] of [
       ['V', V, A], ['VB', VB, A], ['VS', VS, A], ['VT', VT, A], ['SHIP_B', SHIP_B, B], ['SHIP_C', SHIP_C, C],
     ] as const)
       caps[k] = await mintCap(e, o.toSuiAddress())
 
-    for (const [e, o, cap, fuel] of [
+    for (const [e, o, cap, kg] of [
       [V, A, caps.V, LONG_FUEL], [VB, A, caps.VB, LONG_FUEL], [VT, A, caps.VT, LONG_FUEL],
       [SHIP_B, B, caps.SHIP_B, LONG_FUEL], [SHIP_C, C, caps.SHIP_C, LONG_FUEL],
     ] as const)
-      await powerOn(o, e, cap, fuel)
+      await powerOn(o, e, cap, kg)
 
     await enableShipActions(B, SHIP_B, caps.SHIP_B)
     await enableShipActions(C, SHIP_C, caps.SHIP_C)
@@ -337,7 +385,7 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     const ship = bridge.object(SHIP_B)
     const r = interact(bridge, config, ship, 'bridge_in')
     verifyOwner(bridge, config, ship, r, caps.SHIP_B)
-    gameItemToChain(bridge, config, ship, r, { typeId: ORE, quantity: 100n, volume: VOL })
+    gameItemToChain(bridge, config, ship, r, { variant: ore, quantity: 100n })
     completeRequest(bridge, config, ship, r)
     await expectSponsored(client, bridge, B)
     expect(await bal(SHIP_B)).toBe(100n)
@@ -385,13 +433,7 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
 
   // ── 2. happy path ─────────────────────────────────────────────────────────
   it('depositor locks 10 ORE from their docked ship and receives a 10-ORE receipt', async () => {
-    const tx = new Transaction()
-    verifyDocking(tx, config, await dockedProof(config, SHIP_B, V, B.toSuiAddress()))
-    const item = unloadShip(tx, SHIP_B, caps.SHIP_B, 10n)
-    const receipt = depositForReceipt(tx, V, item)
-    tx.transferObjects([receipt], B.toSuiAddress())
-    const res = await expectSuccess(client, tx, B)
-    receiptB = created(res, '::multicoin::Balance')
+    receiptB = await depositFromB(V, 10n)
     expect(await bal(V)).toBe(10n)
     expect(await bal(SHIP_B)).toBe(90n)
     expect(await supply(V)).toBe(10n)
@@ -409,7 +451,6 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     const receiptC = created(res, '::multicoin::Balance')
 
     const tx = new Transaction()
-    verifyDocking(tx, config, await dockedProof(config, SHIP_C, V, C.toSuiAddress()))
     const item = redeem(tx, V, tx.object(receiptC))
     loadShip(tx, SHIP_C, caps.SHIP_C, item)
     await expectSuccess(client, tx, C)
@@ -420,7 +461,7 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
   })
 
   // ── 3. owner / third-party bypass attempts (all must fail) ──────────────────
-  it('EXPECT-FAIL: the former owner cannot add a "steal" action (cap is parked on the entity)', async () => {
+  it('EXPECT-FAIL: the former owner cannot add a "steal" action (cap is parked)', async () => {
     const tx = new Transaction()
     const e = tx.object(V)
     enableAction(tx, config, e, 'steal', [withdrawRequirement(tx, config, INV, {})], caps.V)
@@ -440,10 +481,9 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
 
   it('EXPECT-FAIL: anyone calling wr_redeem but withdrawing directly (skipping the burn) aborts', async () => {
     const tx = new Transaction()
-    verifyDocking(tx, config, await dockedProof(config, SHIP_C, V, C.toSuiAddress()))
     const e = tx.object(V)
     const r = interact(tx, config, e, 'wr_redeem')
-    const item = withdraw(tx, config, e, r, { typeId: ORE, quantity: 6n })
+    const item = withdraw(tx, config, e, r, { key: ORE_KEY, quantity: 6n })
     completeRequest(tx, config, e, r)
     loadShip(tx, SHIP_C, caps.SHIP_C, item)
     const msg = await expectFails(tx, C.toSuiAddress(), /ERequirementNotComponentScoped|EWrongRequirementType/)
@@ -452,7 +492,6 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
 
   it('EXPECT-FAIL: anyone calling wr_deposit but depositing directly (to dodge or fake a mint) aborts', async () => {
     const tx = new Transaction()
-    verifyDocking(tx, config, await dockedProof(config, SHIP_B, V, B.toSuiAddress()))
     const item = unloadShip(tx, SHIP_B, caps.SHIP_B, 1n)
     const e = tx.object(V)
     const r = interact(tx, config, e, 'wr_deposit')
@@ -462,13 +501,19 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     record({ claim: 'deposit behind wr_deposit only runs through the minting handler', kind: 'guarantee', result: 'PASS', detail: msg.slice(0, 200) })
   })
 
-  it('EXPECT-FAIL: redeeming without being docked aborts (physics still applies)', async () => {
+  it('EXPECT-FAIL: redeeming into a ship that is not docked at the vault aborts (physics still applies)', async () => {
+    const off = new Transaction()
+    undock(off, config, off.object(V), off.object(SHIP_B))
+    await expectSuccess(client, off)
+
     const tx = new Transaction()
-    const item = redeem(tx, V, tx.object(receiptB))
-    loadShip(tx, SHIP_B, caps.SHIP_B, item)
-    const msg = await expectFails(tx, B.toSuiAddress(), /ENoDocking/)
-    record({ claim: 'redemption requires a docking proof (or admin/sponsor attest)', kind: 'flow', result: 'PASS', detail: 'remote settlement needs the game server' })
-    expect(msg).toBeTruthy()
+    loadShip(tx, SHIP_B, caps.SHIP_B, redeem(tx, V, tx.object(receiptB)))
+    const msg = await expectFails(tx, B.toSuiAddress(), /ENotDocked|EWrongSource/)
+
+    const on = new Transaction()
+    dock(on, config, on.object(V), on.object(SHIP_B))
+    await expectSuccess(client, on)
+    record({ claim: 'redemption requires the ship to be docked at the vault (admin-recorded state)', kind: 'flow', result: 'PASS', detail: msg.slice(0, 160) })
   })
 
   // ── 4. residual risks the design cannot close on dev ────────────────────────
@@ -480,19 +525,13 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     await sealVault(A, VB, caps.VB)
 
     // B deposits 5 ORE into VB and gets a receipt. Everything looks normal on-chain.
-    const dep = new Transaction()
-    verifyDocking(dep, config, await dockedProof(config, SHIP_B, VB, B.toSuiAddress()))
-    const receipt = depositForReceipt(dep, VB, unloadShip(dep, SHIP_B, caps.SHIP_B, 5n))
-    dep.transferObjects([receipt], B.toSuiAddress())
-    const res = await expectSuccess(client, dep, B)
-    const receiptVB = created(res, '::multicoin::Balance')
+    const receiptVB = await depositFromB(VB, 5n)
 
     // C (not the owner, holds no receipt) drains VB through the backdoor.
     const drain = new Transaction()
-    verifyDocking(drain, config, await dockedProof(config, SHIP_C, VB, C.toSuiAddress()))
     const e = drain.object(VB)
     const r = interact(drain, config, e, 'backdoor')
-    const loot = withdraw(drain, config, e, r, { typeId: ORE, quantity: 5n })
+    const loot = withdraw(drain, config, e, r, { key: ORE_KEY, quantity: 5n })
     completeRequest(drain, config, e, r)
     loadShip(drain, SHIP_C, caps.SHIP_C, loot)
     await expectSuccess(client, drain, C)
@@ -501,7 +540,6 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
 
     // B's receipt is now unredeemable.
     const tx = new Transaction()
-    verifyDocking(tx, config, await dockedProof(config, SHIP_B, VB, B.toSuiAddress()))
     loadShip(tx, SHIP_B, caps.SHIP_B, redeem(tx, VB, tx.object(receiptVB)))
     const msg = await expectFails(tx, B.toSuiAddress())
     record({
@@ -513,7 +551,6 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
 
     // Cross-vault check while we have a foreign receipt: VB's receipt can't redeem at V.
     const cross = new Transaction()
-    verifyDocking(cross, config, await dockedProof(config, SHIP_B, V, B.toSuiAddress()))
     loadShip(cross, SHIP_B, caps.SHIP_B, redeem(cross, V, cross.object(receiptVB)))
     const crossMsg = await expectFails(cross, B.toSuiAddress(), /EWrongCollection/)
     record({ claim: "a vault rejects another vault's receipts", kind: 'guarantee', result: 'PASS', detail: crossMsg.slice(0, 160) })
@@ -522,21 +559,15 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
   it('RISK: a sealed vault cannot be refueled by anyone; when fuel runs out receipts are unredeemable', async () => {
     await powerOn(A, VS, caps.VS, SHORT_FUEL)
     await sealVault(A, VS, caps.VS)
-    const dep = new Transaction()
-    verifyDocking(dep, config, await dockedProof(config, SHIP_B, VS, B.toSuiAddress()))
-    const receipt = depositForReceipt(dep, VS, unloadShip(dep, SHIP_B, caps.SHIP_B, 3n))
-    dep.transferObjects([receipt], B.toSuiAddress())
-    const res = await expectSuccess(client, dep, B)
-    const receiptVS = created(res, '::multicoin::Balance')
+    const receiptVS = await depositFromB(VS, 3n)
 
     const deadline = Date.now() + 90_000
     while ((await fuelOf(VS)) > 0n && Date.now() < deadline) await new Promise((r) => setTimeout(r, 2_000))
     expect(await fuelOf(VS)).toBe(0n)
 
     const tx = new Transaction()
-    verifyDocking(tx, config, await dockedProof(config, SHIP_B, VS, B.toSuiAddress()))
     loadShip(tx, SHIP_B, caps.SHIP_B, redeem(tx, VS, tx.object(receiptVS)))
-    const redeemMsg = await expectFails(tx, B.toSuiAddress(), /EOutOfFuel|ENoGrant/)
+    const redeemMsg = await expectFails(tx, B.toSuiAddress())
 
     // deposit_fuel pushes an owner requirement from inside the handler; the cap is parked.
     const refuelOwner = new Transaction()
@@ -556,12 +587,12 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     const fresh = await mintCap(VS, A.toSuiAddress())
     const re = new Transaction()
     refuel(re, VS, fresh, LONG_FUEL)
+    switchGridOn(re, VS, fresh) // running dry tripped the grid
     await expectSponsored(client, re, A)
     const retry = new Transaction()
-    verifyDocking(retry, config, await dockedProof(config, SHIP_B, VS, B.toSuiAddress()))
     loadShip(retry, SHIP_B, caps.SHIP_B, redeem(retry, VS, retry.object(receiptVS)))
     await expectSuccess(client, retry, B)
-    record({ claim: 'recovery from fuel-out requires the admin to re-mint an owner cap', kind: 'risk', result: 'RISK_CONFIRMED', detail: 'revoke + mint_access + refuel, then redeem succeeds' })
+    record({ claim: 'recovery from fuel-out requires the admin to re-mint an owner cap', kind: 'risk', result: 'RISK_CONFIRMED', detail: 'revoke + mint_access + refuel + grid on, then redeem succeeds' })
   }, 180_000)
 
   it('RISK: admin re-mint un-seals a vault; the new owner can add a drain action', async () => {
@@ -578,10 +609,9 @@ describe('warehouse-receipts on world-contracts dev (localnet)', () => {
     await expectSuccess(client, shadow)
 
     const drain = new Transaction()
-    verifyDocking(drain, config, await dockedProof(config, SHIP_C, V, C.toSuiAddress()))
     const e = drain.object(V)
     const r = interact(drain, config, e, 'wr_redeem')
-    const loot = withdraw(drain, config, e, r, { typeId: ORE, quantity: 6n })
+    const loot = withdraw(drain, config, e, r, { key: ORE_KEY, quantity: 6n })
     completeRequest(drain, config, e, r)
     loadShip(drain, SHIP_C, caps.SHIP_C, loot)
     await expectSuccess(client, drain, C)

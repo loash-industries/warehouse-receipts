@@ -6,12 +6,14 @@
 /// config's address from the entity id without an index.
 ///
 /// The config custodies the MultiCoin `CollectionCap`. Each vault gets its own
-/// `Collection`, so `collection_id` identifies the vault and `asset_id` is the
-/// game `type_id`.
+/// `Collection`, so `collection_id` identifies the vault. A receipt's `asset_id`
+/// is derived from the item's `VariantKey` (`asset_id`), and the config keeps
+/// the reverse map so a redeem knows which variant to free.
 module warehouse_receipts::vault;
 
 use multicoin::multicoin::{Self, Balance, Collection, CollectionCap};
-use sui::derived_object;
+use sui::{bcs, derived_object, hash, table::{Self, Table}};
+use variant::variant::VariantKey;
 
 // === Errors ===
 
@@ -19,6 +21,8 @@ use sui::derived_object;
 const EWrongCollection: vector<u8> = b"Receipt is not from this vault's collection";
 #[error(code = 1)]
 const EVaultExists: vector<u8> = b"This entity already has a warehouse receipt vault";
+#[error(code = 2)]
+const EAssetIdCollision: vector<u8> = b"Two variants derive the same receipt asset id";
 
 // === Structs ===
 
@@ -39,6 +43,8 @@ public struct VaultConfig has key {
     /// Component id of the entity's Inventory (the Airlock) holding the items.
     inventory_id: u64,
     collection_cap: CollectionCap,
+    /// Receipt `asset_id` -> the item variant it stands for.
+    assets: Table<u64, VariantKey>,
 }
 
 // === Init ===
@@ -60,34 +66,39 @@ public(package) fun create(
     assert!(!derived_object::exists(&registry.id, VaultKey(entity_id)), EVaultExists);
     let id = derived_object::claim(&mut registry.id, VaultKey(entity_id));
     let (collection, collection_cap) = multicoin::new_collection(ctx);
-    (VaultConfig { id, entity_id, inventory_id, collection_cap }, collection)
+    let assets = table::new(ctx);
+    (VaultConfig { id, entity_id, inventory_id, collection_cap, assets }, collection)
 }
 
 public(package) fun share(config: VaultConfig) {
     transfer::share_object(config);
 }
 
+/// Mint a receipt for `quantity` of variant `key`, recording its asset id.
 public(package) fun mint(
-    config: &VaultConfig,
+    config: &mut VaultConfig,
     collection: &mut Collection,
-    type_id: u64,
+    key: VariantKey,
     quantity: u64,
     ctx: &mut TxContext,
 ): Balance {
-    multicoin::mint_balance(&config.collection_cap, collection, type_id, quantity, ctx)
+    let asset = asset_id(&key);
+    if (config.assets.contains(asset)) assert!(config.assets[asset] == key, EAssetIdCollision)
+    else config.assets.add(asset, key);
+    multicoin::mint_balance(&config.collection_cap, collection, asset, quantity, ctx)
 }
 
-/// Burn a receipt from this vault's collection. Returns `(type_id, quantity)`.
+/// Burn a receipt from this vault's collection. Returns `(key, quantity)`.
 public(package) fun burn(
     config: &VaultConfig,
     collection: &mut Collection,
     receipt: Balance,
     ctx: &TxContext,
-): (u64, u64) {
+): (VariantKey, u64) {
     assert!(receipt.collection_id() == collection_id(config), EWrongCollection);
-    let type_id = receipt.asset_id();
+    let key = config.assets[receipt.asset_id()];
     let quantity = multicoin::burn(collection, receipt, ctx);
-    (type_id, quantity)
+    (key, quantity)
 }
 
 // === View Functions ===
@@ -100,8 +111,20 @@ public fun collection_id(config: &VaultConfig): ID {
     multicoin::cap_collection_id(&config.collection_cap)
 }
 
-public fun total_supply(collection: &Collection, type_id: u64): u64 {
-    multicoin::total_supply(collection, type_id)
+public fun total_supply(collection: &Collection, asset_id: u64): u64 {
+    multicoin::total_supply(collection, asset_id)
+}
+
+/// Receipt asset id for item variant `key`: the first 8 bytes (LE) of
+/// `blake2b256(bcs(key))`.
+public fun asset_id(key: &VariantKey): u64 {
+    bcs::new(hash::blake2b256(&bcs::to_bytes(key))).peel_u64()
+}
+
+/// The item variant behind receipt `asset_id`, if this vault ever minted it.
+public fun asset_key(config: &VaultConfig, asset_id: u64): Option<VariantKey> {
+    if (config.assets.contains(asset_id)) option::some(config.assets[asset_id])
+    else option::none()
 }
 
 /// Whether `entity_id` already has a vault.
