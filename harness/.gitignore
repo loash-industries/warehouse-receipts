@@ -1,0 +1,4 @@
+out/
+ts/node_modules
+move/*/build/
+move/*/Move.lock
